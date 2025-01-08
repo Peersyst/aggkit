@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/agglayer/aggkit/aggsender/mocks"
+	"github.com/agglayer/aggkit/aggsender/rpc/mocks"
 	"github.com/agglayer/aggkit/aggsender/types"
 	"github.com/stretchr/testify/require"
 )
@@ -80,14 +80,14 @@ func TestAggsenderRPCGetCertificateHeaderPerHeight(t *testing.T) {
 
 type aggsenderRPCTestData struct {
 	sut           *AggsenderRPC
-	mockStore     *mocks.AggsenderStorer
-	mockAggsender *mocks.AggsenderInterface
+	mockStore     *mocks.MockAggsenderStorer
+	mockAggsender *mocks.MockAggsenderInterface
 }
 
 func newAggsenderData(t *testing.T) *aggsenderRPCTestData {
 	t.Helper()
-	mockStore := mocks.NewAggsenderStorer(t)
-	mockAggsender := mocks.NewAggsenderInterface(t)
+	mockStore := mocks.NewMockAggsenderStorer(t)
+	mockAggsender := mocks.NewMockAggsenderInterface(t)
 	sut := NewAggsenderRPC(nil, mockStore, mockAggsender)
 	return &aggsenderRPCTestData{sut, mockStore, mockAggsender}
 }

@@ -39,8 +39,8 @@ func TestNewLx(t *testing.T) {
 		originNetwork              = uint32(1)
 	)
 
-	mockEthClient := mocksbridgesync.NewEthClienter(t)
-	mockReorgDetector := mocksbridgesync.NewReorgDetector(t)
+	mockEthClient := mocksbridgesync.NewMockEthClienter(t)
+	mockReorgDetector := mocksbridgesync.NewMockReorgDetector(t)
 
 	mockReorgDetector.EXPECT().Subscribe(mock.Anything).Return(nil, nil)
 

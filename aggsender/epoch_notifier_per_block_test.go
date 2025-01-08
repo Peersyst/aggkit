@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/agglayer/aggkit/agglayer"
+	agglayerMocks "github.com/agglayer/aggkit/agglayer/mocks"
 	"github.com/agglayer/aggkit/aggsender/mocks"
 	"github.com/agglayer/aggkit/aggsender/types"
 	"github.com/agglayer/aggkit/etherman"
@@ -116,7 +117,7 @@ func TestEpochStep(t *testing.T) {
 func TestNewConfigEpochNotifierPerBlock(t *testing.T) {
 	_, err := NewConfigEpochNotifierPerBlock(nil, 1)
 	require.Error(t, err)
-	aggLayerMock := agglayer.NewAgglayerClientMock(t)
+	aggLayerMock := agglayerMocks.NewMockAgglayerClientInterface(t)
 	aggLayerMock.On("GetEpochConfiguration").Return(nil, fmt.Errorf("error")).Once()
 	_, err = NewConfigEpochNotifierPerBlock(aggLayerMock, 1)
 	require.Error(t, err)

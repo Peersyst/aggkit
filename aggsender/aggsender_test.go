@@ -12,10 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agglayer/aggkit/agglayer"
+	agglayer "github.com/agglayer/aggkit/agglayer"
+	agglayerMocks "github.com/agglayer/aggkit/agglayer/mocks"
 	"github.com/agglayer/aggkit/aggsender/db"
-	"github.com/agglayer/aggkit/aggsender/mocks"
+
+	aggsenderDBMocks "github.com/agglayer/aggkit/aggsender/db/mocks"
 	aggsendertypes "github.com/agglayer/aggkit/aggsender/types"
+	aggsenderTypesMocks "github.com/agglayer/aggkit/aggsender/types/mocks"
 	"github.com/agglayer/aggkit/bridgesync"
 	"github.com/agglayer/aggkit/config/types"
 	"github.com/agglayer/aggkit/l1infotreesync"
@@ -271,9 +274,9 @@ func TestGetBridgeExits(t *testing.T) {
 }
 
 func TestAggSenderStart(t *testing.T) {
-	aggLayerMock := agglayer.NewAgglayerClientMock(t)
-	epochNotifierMock := mocks.NewEpochNotifier(t)
-	bridgeL2SyncerMock := mocks.NewL2BridgeSyncer(t)
+	aggLayerMock := agglayerMocks.NewMockAgglayerClientInterface(t)
+	epochNotifierMock := aggsenderTypesMocks.NewMockEpochNotifier(t)
+	bridgeL2SyncerMock := aggsenderTypesMocks.NewMockL2BridgeSyncer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	aggSender, err := New(
@@ -303,9 +306,9 @@ func TestAggSenderStart(t *testing.T) {
 }
 
 func TestAggSenderSendCertificates(t *testing.T) {
-	AggLayerMock := agglayer.NewAgglayerClientMock(t)
-	epochNotifierMock := mocks.NewEpochNotifier(t)
-	bridgeL2SyncerMock := mocks.NewL2BridgeSyncer(t)
+	AggLayerMock := agglayerMocks.NewMockAgglayerClientInterface(t)
+	epochNotifierMock := aggsenderTypesMocks.NewMockEpochNotifier(t)
+	bridgeL2SyncerMock := aggsenderTypesMocks.NewMockL2BridgeSyncer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	aggSender, err := New(
@@ -343,7 +346,7 @@ func TestGetImportedBridgeExits(t *testing.T) {
 
 	mockProof := generateTestProof(t)
 
-	mockL1InfoTreeSyncer := mocks.NewL1InfoTreeSyncer(t)
+	mockL1InfoTreeSyncer := aggsenderTypesMocks.NewMockL1InfoTreeSyncer(t)
 	mockL1InfoTreeSyncer.On("GetInfoByGlobalExitRoot", mock.Anything).Return(&l1infotreesync.L1InfoTreeLeaf{
 		L1InfoTreeIndex:   1,
 		Timestamp:         123456789,
@@ -576,8 +579,8 @@ func TestGetImportedBridgeExits(t *testing.T) {
 }
 
 func TestBuildCertificate(t *testing.T) {
-	mockL2BridgeSyncer := mocks.NewL2BridgeSyncer(t)
-	mockL1InfoTreeSyncer := mocks.NewL1InfoTreeSyncer(t)
+	mockL2BridgeSyncer := aggsenderTypesMocks.NewMockL2BridgeSyncer(t)
+	mockL1InfoTreeSyncer := aggsenderTypesMocks.NewMockL1InfoTreeSyncer(t)
 	mockProof := generateTestProof(t)
 
 	tests := []struct {
@@ -900,8 +903,8 @@ func TestCheckIfCertificatesAreSettled(t *testing.T) {
 		tt := tt
 
 		t.Run(tt.name, func(t *testing.T) {
-			mockStorage := mocks.NewAggSenderStorage(t)
-			mockAggLayerClient := agglayer.NewAgglayerClientMock(t)
+			mockStorage := aggsenderDBMocks.NewMockAggSenderStorage(t)
+			mockAggLayerClient := agglayerMocks.NewMockAgglayerClientInterface(t)
 			mockLogger := log.WithFields("test", "unittest")
 
 			mockStorage.On("GetCertificatesByStatus", agglayer.NonSettledStatuses).Return(
@@ -955,23 +958,23 @@ func TestSendCertificate(t *testing.T) {
 		expectedError                           string
 	}
 
-	setupTest := func(cfg testCfg) (*AggSender, *mocks.AggSenderStorage, *mocks.L2BridgeSyncer,
-		*agglayer.AgglayerClientMock, *mocks.L1InfoTreeSyncer) {
+	setupTest := func(cfg testCfg) (*AggSender, *aggsenderDBMocks.MockAggSenderStorage, *aggsenderTypesMocks.MockL2BridgeSyncer,
+		*agglayerMocks.MockAgglayerClientInterface, *aggsenderTypesMocks.MockL1InfoTreeSyncer) {
 		var (
 			aggsender = &AggSender{
 				log:          log.WithFields("aggsender", 1),
 				cfg:          Config{MaxRetriesStoreCertificate: 1},
 				sequencerKey: cfg.sequencerKey,
 			}
-			mockStorage          *mocks.AggSenderStorage
-			mockL2Syncer         *mocks.L2BridgeSyncer
-			mockAggLayerClient   *agglayer.AgglayerClientMock
-			mockL1InfoTreeSyncer *mocks.L1InfoTreeSyncer
+			mockStorage          *aggsenderDBMocks.MockAggSenderStorage
+			mockL2Syncer         *aggsenderTypesMocks.MockL2BridgeSyncer
+			mockAggLayerClient   *agglayerMocks.MockAgglayerClientInterface
+			mockL1InfoTreeSyncer *aggsenderTypesMocks.MockL1InfoTreeSyncer
 		)
 
 		if cfg.shouldSendCertificate != nil || cfg.getLastSentCertificate != nil ||
 			cfg.saveLastSentCertificate != nil {
-			mockStorage = mocks.NewAggSenderStorage(t)
+			mockStorage = aggsenderDBMocks.NewMockAggSenderStorage(t)
 			mockStorage.On("GetCertificatesByStatus", agglayer.NonSettledStatuses).
 				Return(cfg.shouldSendCertificate...)
 
@@ -988,7 +991,7 @@ func TestSendCertificate(t *testing.T) {
 
 		if cfg.lastL2BlockProcessed != nil || cfg.originNetwork != nil ||
 			cfg.getBridges != nil || cfg.getClaims != nil || cfg.getInfoByGlobalExitRoot != nil {
-			mockL2Syncer = mocks.NewL2BridgeSyncer(t)
+			mockL2Syncer = aggsenderTypesMocks.NewMockL2BridgeSyncer(t)
 
 			mockL2Syncer.On("GetLastProcessedBlock", mock.Anything).Return(cfg.lastL2BlockProcessed...).Once()
 
@@ -1012,7 +1015,7 @@ func TestSendCertificate(t *testing.T) {
 		}
 
 		if cfg.sendCertificate != nil {
-			mockAggLayerClient = agglayer.NewAgglayerClientMock(t)
+			mockAggLayerClient = agglayerMocks.NewMockAgglayerClientInterface(t)
 			mockAggLayerClient.On("SendCertificate", mock.Anything).Return(cfg.sendCertificate...).Once()
 
 			aggsender.aggLayerClient = mockAggLayerClient
@@ -1020,7 +1023,7 @@ func TestSendCertificate(t *testing.T) {
 
 		if cfg.getInfoByGlobalExitRoot != nil ||
 			cfg.getL1InfoTreeRootByIndex != nil || cfg.getL1InfoTreeMerkleProofFromIndexToRoot != nil {
-			mockL1InfoTreeSyncer = mocks.NewL1InfoTreeSyncer(t)
+			mockL1InfoTreeSyncer = aggsenderTypesMocks.NewMockL1InfoTreeSyncer(t)
 			mockL1InfoTreeSyncer.On("GetInfoByGlobalExitRoot", mock.Anything).Return(cfg.getInfoByGlobalExitRoot...).Once()
 
 			if cfg.getL1InfoTreeRootByIndex != nil {
@@ -1625,7 +1628,7 @@ func TestGetNextHeightAndPreviousLER(t *testing.T) {
 
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			storageMock := mocks.NewAggSenderStorage(t)
+			storageMock := aggsenderDBMocks.NewMockAggSenderStorage(t)
 			aggSender := &AggSender{log: log.WithFields("aggsender-test", "getNextHeightAndPreviousLER"), storage: storageMock}
 			if tt.lastSettleCertificateInfoCall || tt.lastSettleCertificateInfo != nil || tt.lastSettleCertificateInfoError != nil {
 				storageMock.EXPECT().GetCertificateByHeight(mock.Anything).Return(tt.lastSettleCertificateInfo, tt.lastSettleCertificateInfoError).Once()
@@ -1647,10 +1650,10 @@ func TestSendCertificate_NoClaims(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	mockStorage := mocks.NewAggSenderStorage(t)
-	mockL2Syncer := mocks.NewL2BridgeSyncer(t)
-	mockAggLayerClient := agglayer.NewAgglayerClientMock(t)
-	mockL1InfoTreeSyncer := mocks.NewL1InfoTreeSyncer(t)
+	mockStorage := aggsenderDBMocks.NewMockAggSenderStorage(t)
+	mockL2Syncer := aggsenderTypesMocks.NewMockL2BridgeSyncer(t)
+	mockAggLayerClient := agglayerMocks.NewMockAgglayerClientInterface(t)
+	mockL1InfoTreeSyncer := aggsenderTypesMocks.NewMockL1InfoTreeSyncer(t)
 
 	aggSender := &AggSender{
 		log:              log.WithFields("aggsender-test", "no claims test"),
@@ -2032,10 +2035,10 @@ const (
 
 type aggsenderTestData struct {
 	ctx                  context.Context
-	agglayerClientMock   *agglayer.AgglayerClientMock
-	l2syncerMock         *mocks.L2BridgeSyncer
-	l1InfoTreeSyncerMock *mocks.L1InfoTreeSyncer
-	storageMock          *mocks.AggSenderStorage
+	agglayerClientMock   *agglayerMocks.MockAgglayerClientInterface
+	l2syncerMock         *aggsenderTypesMocks.MockL2BridgeSyncer
+	l1InfoTreeSyncerMock *aggsenderTypesMocks.MockL1InfoTreeSyncer
+	storageMock          *aggsenderDBMocks.MockAggSenderStorage
 	sut                  *AggSender
 	testCerts            []aggsendertypes.CertificateInfo
 }
@@ -2093,15 +2096,15 @@ func certInfoToCertHeader(t *testing.T, certInfo *aggsendertypes.CertificateInfo
 
 func newAggsenderTestData(t *testing.T, creationFlags testDataFlags) *aggsenderTestData {
 	t.Helper()
-	l2syncerMock := mocks.NewL2BridgeSyncer(t)
-	agglayerClientMock := agglayer.NewAgglayerClientMock(t)
-	l1InfoTreeSyncerMock := mocks.NewL1InfoTreeSyncer(t)
+	l2syncerMock := aggsenderTypesMocks.NewMockL2BridgeSyncer(t)
+	agglayerClientMock := agglayerMocks.NewMockAgglayerClientInterface(t)
+	l1InfoTreeSyncerMock := aggsenderTypesMocks.NewMockL1InfoTreeSyncer(t)
 	logger := log.WithFields("aggsender-test", "checkLastCertificateFromAgglayer")
-	var storageMock *mocks.AggSenderStorage
+	var storageMock *aggsenderDBMocks.MockAggSenderStorage
 	var storage db.AggSenderStorage
 	var err error
 	if creationFlags&testDataFlagMockStorage != 0 {
-		storageMock = mocks.NewAggSenderStorage(t)
+		storageMock = aggsenderDBMocks.NewMockAggSenderStorage(t)
 		storage = storageMock
 	} else {
 		dbPath := path.Join(t.TempDir(), "newAggsenderTestData.sqlite")

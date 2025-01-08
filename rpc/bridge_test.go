@@ -419,21 +419,21 @@ func TestGetFirstL1InfoTreeIndexForL2Bridge(t *testing.T) {
 
 type bridgeWithMocks struct {
 	bridge       *BridgeEndpoints
-	sponsor      *mocks.ClaimSponsorer
-	l1InfoTree   *mocks.L1InfoTreer
-	injectedGERs *mocks.LastGERer
-	bridgeL1     *mocks.Bridger
-	bridgeL2     *mocks.Bridger
+	sponsor      *mocks.MockClaimSponsorer
+	l1InfoTree   *mocks.MockL1InfoTreer
+	injectedGERs *mocks.MockLastGERer
+	bridgeL1     *mocks.MockBridger
+	bridgeL2     *mocks.MockBridger
 }
 
 func newBridgeWithMocks(t *testing.T) bridgeWithMocks {
 	t.Helper()
 	b := bridgeWithMocks{
-		sponsor:      mocks.NewClaimSponsorer(t),
-		l1InfoTree:   mocks.NewL1InfoTreer(t),
-		injectedGERs: mocks.NewLastGERer(t),
-		bridgeL1:     mocks.NewBridger(t),
-		bridgeL2:     mocks.NewBridger(t),
+		sponsor:      mocks.NewMockClaimSponsorer(t),
+		l1InfoTree:   mocks.NewMockL1InfoTreer(t),
+		injectedGERs: mocks.NewMockLastGERer(t),
+		bridgeL1:     mocks.NewMockBridger(t),
+		bridgeL2:     mocks.NewMockBridger(t),
 	}
 	logger := log.WithFields("module", "bridgerpc")
 	b.bridge = NewBridgeEndpoints(

@@ -23,7 +23,7 @@ func TestSync(t *testing.T) {
 		MaxRetryAttemptsAfterError: 5,
 		RetryAfterErrorPeriod:      time.Millisecond * 100,
 	}
-	rdm := NewReorgDetectorMock(t)
+	rdm := NewMockReorgDetector(t)
 	pm := NewProcessorMock(t)
 	dm := NewEVMDownloaderMock(t)
 	firstReorgedBlock := make(chan uint64)

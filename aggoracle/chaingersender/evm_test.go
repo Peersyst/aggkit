@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/0xPolygon/zkevm-ethtx-manager/types"
-	"github.com/agglayer/aggkit/aggoracle/mocks"
+	"github.com/agglayer/aggkit/aggoracle/chaingersender/mocks"
 	"github.com/agglayer/aggkit/log"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"

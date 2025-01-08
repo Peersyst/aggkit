@@ -13,7 +13,7 @@ import (
 	aggkittypes "github.com/agglayer/aggkit/config/types"
 	"github.com/agglayer/aggkit/etherman"
 	"github.com/agglayer/aggkit/l1infotreesync"
-	mocks_l1infotreesync "github.com/agglayer/aggkit/l1infotreesync/mocks"
+	mocks "github.com/agglayer/aggkit/l1infotreesync/mocks"
 	"github.com/agglayer/aggkit/reorgdetector"
 	"github.com/agglayer/aggkit/test/contracts/verifybatchesmock"
 	"github.com/agglayer/aggkit/test/helpers"
@@ -65,7 +65,7 @@ func TestE2E(t *testing.T) {
 	ctx, cancelCtx := context.WithCancel(context.Background())
 	dbPath := path.Join(t.TempDir(), "l1infotreesyncTestE2E.sqlite")
 
-	rdm := mocks_l1infotreesync.NewReorgDetectorMock(t)
+	rdm := mocks.NewMockReorgDetector(t)
 	rdm.On("Subscribe", mock.Anything).Return(&reorgdetector.Subscription{}, nil)
 	rdm.On("AddBlockToTrack", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 

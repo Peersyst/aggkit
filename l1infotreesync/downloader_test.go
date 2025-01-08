@@ -37,7 +37,7 @@ func TestBuildAppender(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l1Client := mocks_l1infotreesync.NewEthClienter(t)
+			l1Client := mocks_l1infotreesync.NewMockEthClienter(t)
 			globalExitRoot := common.HexToAddress("0x1")
 			rollupManager := common.HexToAddress("0x2")
 			if tt.flags == FlagNone {
@@ -54,7 +54,7 @@ func TestBuildAppender(t *testing.T) {
 }
 
 func TestBuildAppenderVerifiedContractAddr(t *testing.T) {
-	l1Client := mocks_l1infotreesync.NewEthClienter(t)
+	l1Client := mocks_l1infotreesync.NewMockEthClienter(t)
 	globalExitRoot := common.HexToAddress("0x1")
 	rollupManager := common.HexToAddress("0x2")
 
