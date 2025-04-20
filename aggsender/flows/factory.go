@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/agglayer/aggkit/aggoracle/chaingerreader"
 	"github.com/agglayer/aggkit/aggsender/config"
 	"github.com/agglayer/aggkit/aggsender/db"
 	"github.com/agglayer/aggkit/aggsender/grpc"
@@ -57,19 +58,30 @@ func NewFlow(
 			return nil, fmt.Errorf("error creating aggkit prover client: %w", err)
 		}
 
+		gerReader, err := chaingerreader.NewEVMChainGERReader(cfg.GlobalExitRootL2Addr, l2Client)
+		if err != nil {
+			return nil, fmt.Errorf("aggchainProverFlow - error creating L2Etherman: %w", err)
+		}
+
+		l1InfoTreeQuerier := query.NewL1InfoTreeDataQuerier(l1Client, l1InfoTreeSyncer)
+
+		startL2Block, err := getL2StartBlock(cfg.SovereignRollupAddr, l1Client)
+		if err != nil {
+			return nil, fmt.Errorf("aggchainProverFlow - error reading sovereign rollup: %w", err)
+		}
+
 		return NewAggchainProverFlow(
 			logger,
 			cfg.MaxCertSize,
 			cfg.BridgeMetadataAsHash,
-			cfg.GlobalExitRootL2Addr,
-			cfg.SovereignRollupAddr,
+			startL2Block,
 			aggchainProofClient,
 			storage,
-			query.NewL1InfoTreeDataQuerier(l1Client, l1InfoTreeSyncer),
+			l1InfoTreeQuerier,
 			query.NewBridgeDataQuerier(l2BridgeSyncer),
+			query.NewGERQuerier(l1InfoTreeQuerier, gerReader),
 			l1Client,
-			l2Client,
-		)
+		), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported Aggsender mode: %s", cfg.Mode)
