@@ -109,6 +109,22 @@ type GERQuerier interface {
 		fromBlock, toBlock uint64) (map[common.Hash]*agglayertypes.ProvenInsertedGERWithBlockNumber, error)
 }
 
+// CertStatus holds the status of pending and in error certificates
+type CertStatus struct {
+	ExistPendingCerts   bool
+	ExistNewInErrorCert bool
+}
+
+// CertificateStatusChecker is an interface defining functions that a CertificateStatusChecker should implement
+type CertificateStatusChecker interface {
+	StartStatusChecking(ctx context.Context, checkStatusInterval time.Duration) <-chan CertStatus
+	CheckPendingCertificatesStatus(ctx context.Context) CertStatus
+	CheckInitialStatus(
+		ctx context.Context,
+		delayBetweenRetries time.Duration,
+		aggsenderStatus *AggsenderStatus)
+}
+
 // EthClient is an interface defining functions that an EthClient should implement
 type EthClient interface {
 	bind.ContractBackend
