@@ -45,8 +45,8 @@ func TestGetInfo(t *testing.T) {
 		MainnetExitRoot:   info1.MainnetExitRoot,
 		RollupExitRoot:    info1.RollupExitRoot,
 	}
-	expected1.GlobalExitRoot = expected1.globalExitRoot()
-	expected1.Hash = expected1.hash()
+	expected1.GlobalExitRoot = expected1.GetGlobalExitRoot()
+	expected1.Hash = expected1.GetHash()
 	err = p.ProcessBlock(ctx, sync.Block{
 		Num: 1,
 		Events: []interface{}{
@@ -85,8 +85,8 @@ func TestGetInfo(t *testing.T) {
 		MainnetExitRoot:   info2.MainnetExitRoot,
 		RollupExitRoot:    info2.RollupExitRoot,
 	}
-	expected2.GlobalExitRoot = expected2.globalExitRoot()
-	expected2.Hash = expected2.hash()
+	expected2.GlobalExitRoot = expected2.GetGlobalExitRoot()
+	expected2.Hash = expected2.GetHash()
 	err = p.ProcessBlock(ctx, sync.Block{
 		Num: 2,
 		Events: []interface{}{
