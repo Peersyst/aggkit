@@ -12,6 +12,7 @@ import (
 	configtypes "github.com/agglayer/aggkit/config/types"
 	"github.com/agglayer/aggkit/log"
 	treetypes "github.com/agglayer/aggkit/tree/types"
+	aggkittypes "github.com/agglayer/aggkit/types"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -63,8 +64,8 @@ func NewAggchainProofGenerationTool(
 	cfg Config,
 	l2Syncer types.L2BridgeSyncer,
 	l1InfoTreeSyncer types.L1InfoTreeSyncer,
-	l1Client types.EthClient,
-	l2Client types.EthClient) (*AggchainProofGenerationTool, error) {
+	l1Client aggkittypes.EthClienter,
+	l2Client aggkittypes.EthClienter) (*AggchainProofGenerationTool, error) {
 	aggchainProofClient, err := grpc.NewAggchainProofClient(
 		cfg.AggchainProofURL, cfg.GenerateAggchainProofTimeout.Duration)
 	if err != nil {

@@ -5,20 +5,8 @@ import (
 
 	ethermanconfig "github.com/agglayer/aggkit/etherman/config"
 	"github.com/agglayer/aggkit/log"
-	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/ethclient"
-	ethrpc "github.com/ethereum/go-ethereum/rpc"
 )
-
-type EthClienter interface {
-	ethereum.LogFilterer
-	ethereum.BlockNumberReader
-	ethereum.ChainReader
-	ethereum.ChainIDReader
-	bind.ContractBackend
-	Client() *ethrpc.Client
-}
 
 func NewRPCClient(cfg ethermanconfig.RPCClientConfig) (EthClienter, error) {
 	switch cfg.Mode {

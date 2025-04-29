@@ -11,9 +11,9 @@ import (
 	ethtxtypes "github.com/0xPolygon/zkevm-ethtx-manager/types"
 	configTypes "github.com/agglayer/aggkit/config/types"
 	"github.com/agglayer/aggkit/log"
+	aggkittypes "github.com/agglayer/aggkit/types"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -28,11 +28,6 @@ const (
 		"Estimated %d, maximum allowed: %d"
 )
 
-type EthClienter interface {
-	ethereum.GasEstimator
-	bind.ContractBackend
-}
-
 type EthTxManager interface {
 	Remove(ctx context.Context, id common.Hash) error
 	ResultsByStatus(ctx context.Context, statuses []ethtxtypes.MonitoredTxStatus) ([]ethtxtypes.MonitoredTxResult, error)
@@ -42,7 +37,7 @@ type EthTxManager interface {
 }
 
 type EVMClaimSponsor struct {
-	l2Client     EthClienter
+	l2Client     aggkittypes.EthClienter
 	bridgeABI    *abi.ABI
 	bridgeAddr   common.Address
 	ethTxManager EthTxManager
@@ -81,7 +76,7 @@ type EVMClaimSponsorConfig struct {
 func NewEVMClaimSponsor(
 	logger *log.Logger,
 	dbPath string,
-	l2Client EthClienter,
+	l2Client aggkittypes.EthClienter,
 	bridgeAddr common.Address,
 	sender common.Address,
 	maxGas, gasOffset uint64,

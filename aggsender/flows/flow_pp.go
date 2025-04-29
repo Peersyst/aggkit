@@ -9,6 +9,7 @@ import (
 	"github.com/agglayer/aggkit/aggsender/db"
 	"github.com/agglayer/aggkit/aggsender/l1infotreequery"
 	"github.com/agglayer/aggkit/aggsender/types"
+	aggkittypes "github.com/agglayer/aggkit/types"
 	signertypes "github.com/agglayer/go_signer/signer/types"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -27,7 +28,7 @@ func NewPPFlow(log types.Logger,
 	storage db.AggSenderStorage,
 	l1InfoTreeSyncer types.L1InfoTreeSyncer,
 	l2Syncer types.L2BridgeSyncer,
-	l1Client types.EthClient,
+	l1Client aggkittypes.EthClienter,
 	signer signertypes.Signer) *PPFlow {
 	return &PPFlow{
 		signer: signer,

@@ -14,6 +14,7 @@ import (
 	"github.com/agglayer/aggkit/aggsender/types"
 	"github.com/agglayer/aggkit/bridgesync"
 	treetypes "github.com/agglayer/aggkit/tree/types"
+	aggkittypes "github.com/agglayer/aggkit/types"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -25,7 +26,7 @@ type AggchainProverFlow struct {
 	gerReader           types.ChainGERReader
 }
 
-func getL2StartBlock(sovereignRollupAddr common.Address, l1Client types.EthClient) (uint64, error) {
+func getL2StartBlock(sovereignRollupAddr common.Address, l1Client aggkittypes.EthClienter) (uint64, error) {
 	a, err := aggchainfep.NewAggchainfepCaller(sovereignRollupAddr, l1Client)
 	if err != nil {
 		return 0, fmt.Errorf("aggchainProverFlow - error creating sovereign rollup caller: %w", err)
@@ -49,8 +50,8 @@ func NewAggchainProverFlow(log types.Logger,
 	storage db.AggSenderStorage,
 	l1InfoTreeSyncer types.L1InfoTreeSyncer,
 	l2Syncer types.L2BridgeSyncer,
-	l1Client types.EthClient,
-	l2Client types.EthClient) (*AggchainProverFlow, error) {
+	l1Client aggkittypes.EthClienter,
+	l2Client aggkittypes.EthClienter) (*AggchainProverFlow, error) {
 	gerReader, err := chaingerreader.NewEVMChainGERReader(gerL2Address, l2Client)
 	if err != nil {
 		return nil, fmt.Errorf("aggchainProverFlow - error creating L2Etherman: %w", err)

@@ -12,8 +12,6 @@ import (
 	"github.com/agglayer/aggkit/etherman"
 	"github.com/agglayer/aggkit/l1infotreesync"
 	treetypes "github.com/agglayer/aggkit/tree/types"
-	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -88,14 +86,6 @@ type L1InfoTreeDataQuerier interface {
 	// CheckIfClaimsArePartOfFinalizedL1InfoTree checks if the claims are part of the finalized L1 Info tree
 	CheckIfClaimsArePartOfFinalizedL1InfoTree(
 		finalizedL1InfoTreeRoot *treetypes.Root, claims []bridgesync.Claim) error
-}
-
-// EthClient is an interface defining functions that an EthClient should implement
-type EthClient interface {
-	bind.ContractBackend
-	ethereum.LogFilterer
-	ethereum.BlockNumberReader
-	ethereum.ChainReader
 }
 
 // Logger is an interface that defines the methods to log messages

@@ -1,8 +1,6 @@
-COMMON_MOCKERY_PARAMS=--disable-version-string --with-expecter --exported
-
 .PHONY: generate-mocks
 generate-mocks:	
-	mockery ${COMMON_MOCKERY_PARAMS}
+	mockery
 
 .PHONY: stop
 stop:
