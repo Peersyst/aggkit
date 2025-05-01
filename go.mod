@@ -152,3 +152,5 @@ require (
 	modernc.org/memory v1.8.2 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+replace github.com/ethereum/go-ethereum => github.com/Peersyst/go-ethereum v1.15.5-agglayer.0
