@@ -9,7 +9,7 @@ on:
   pull_request:
 jobs:
   lint:
-    runs-on: amd-runner-2204
+    runs-on: ubuntu-latest
     steps:
       - name: Install Go
         uses: actions/setup-go@v5

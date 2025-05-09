@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   Resequence:
-    runs-on: amd-runner-2204
+    runs-on: ubuntu-latest
     # TODO: Add "cdk-validium" once it's ready
     # strategy:
     #   matrix:
