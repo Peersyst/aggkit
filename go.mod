@@ -153,4 +153,7 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace github.com/ethereum/go-ethereum => github.com/Peersyst/go-ethereum v1.15.5-agglayer.0
+replace (
+	github.com/0xPolygon/zkevm-ethtx-manager => github.com/Peersyst/zkevm-ethtx-manager v0.2.5-cosmos-evm.1
+	github.com/ethereum/go-ethereum => github.com/Peersyst/go-ethereum v1.15.5-agglayer.0
+)
