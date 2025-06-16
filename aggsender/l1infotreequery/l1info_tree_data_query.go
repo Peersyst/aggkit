@@ -148,7 +148,7 @@ func (l *L1InfoTreeDataQuerier) getLatestProcessedFinalizedBlock(ctx context.Con
 		}
 	}
 
-	if (lastProcessedBlockHash == common.Hash{}) || (lastProcessedBlockHash == lastFinalizedL1Block.Hash()) {
+	if (lastProcessedBlockHash == common.Hash{}) || (lastProcessedBlockHash == lastFinalizedL1Block.RpcHash) {
 		// if the hash is empty it means that this is an old block that was processed before this
 		// feature was added, so we will consider it finalized
 		return lastFinalizedL1Block.Number.Uint64(), nil
@@ -157,5 +157,5 @@ func (l *L1InfoTreeDataQuerier) getLatestProcessedFinalizedBlock(ctx context.Con
 	return 0, fmt.Errorf("l1infotreesyncer returned a different hash for "+
 		"the latest finalized block: %d. Might be that syncer did not process a reorg yet. "+
 		"Expected hash: %s, got: %s", lastProcessedBlockNum,
-		lastFinalizedL1Block.Hash().String(), lastProcessedBlockHash.String())
+		lastFinalizedL1Block.RpcHash.String(), lastProcessedBlockHash.String())
 }
