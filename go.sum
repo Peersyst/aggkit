@@ -38,6 +38,8 @@ github.com/DataDog/zstd v1.5.6 h1:LbEglqepa/ipmmQJUDnSsfvA8e8IStVcGaFWDuxvGOY=
 github.com/DataDog/zstd v1.5.6/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwSAmyw=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
+github.com/Peersyst/go-ethereum v1.15.5-agglayer.0 h1:hajnc47agSwFRH/tXWq/Op3eej2A2qtNkbd6Gn18/PQ=
+github.com/Peersyst/go-ethereum v1.15.5-agglayer.0/go.mod h1:1LG2LnMOx2yPRHR/S+xuipXH29vPr6BIH6GElD8N/fo=
 github.com/VictoriaMetrics/fastcache v1.12.2 h1:N0y9ASrJ0F6h0QaC3o6uJb3NIZ9VKLjCM7NQbSmF7WI=
 github.com/VictoriaMetrics/fastcache v1.12.2/go.mod h1:AmC+Nzz1+3G2eCPapF6UcsnkThDcMsQicp4xDukwJYI=
 github.com/agglayer/go_signer v0.0.7 h1:V+4wFWjGKdL1GgXSzx2RLgglJWyce95Dy/4+9xx52hs=
@@ -133,8 +135,6 @@ github.com/ethereum-optimism/infra/op-signer v1.4.1 h1:vLNPTqbSZH85KItWDuCoRsNto
 github.com/ethereum-optimism/infra/op-signer v1.4.1/go.mod h1:znWwvyDM9lYCQUUjMzQAF8+ysPa418ZzopUr9tdPJWI=
 github.com/ethereum/c-kzg-4844 v1.0.3 h1:IEnbOHwjixW2cTvKRUlAAUOeleV7nNM/umJR+qy4WDs=
 github.com/ethereum/c-kzg-4844 v1.0.3/go.mod h1:VewdlzQmpT5QSrVhbBuGoCdFJkpaJlO1aQputP83wc0=
-github.com/ethereum/go-ethereum v1.15.5 h1:Fo2TbBWC61lWVkFw9tsMoHCNX1ndpuaQBRJ8H6xLUPo=
-github.com/ethereum/go-ethereum v1.15.5/go.mod h1:1LG2LnMOx2yPRHR/S+xuipXH29vPr6BIH6GElD8N/fo=
 github.com/ethereum/go-verkle v0.2.2 h1:I2W0WjnrFUIzzVPwm8ykY+7pL2d4VhlsePn4j7cnFk8=
 github.com/ethereum/go-verkle v0.2.2/go.mod h1:M3b90YRnzqKyyzBEWJGqj8Qff4IDeXnzFw0P9bFw3uk=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=

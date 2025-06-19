@@ -150,7 +150,7 @@ func newBridgeSync(
 
 		err = processor.ProcessBlock(ctx, sync.Block{
 			Num:  initialBlock,
-			Hash: block.Hash(),
+			Hash: block.Header().RpcHash,
 		})
 		if err != nil {
 			return nil, err
