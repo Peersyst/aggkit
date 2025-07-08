@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
-	aggkittypes "github.com/agglayer/aggkit/config/types"
-	"github.com/agglayer/aggkit/etherman"
+	cfgtypes "github.com/agglayer/aggkit/config/types"
+	aggkittypes "github.com/agglayer/aggkit/types"
+	aggkittypesmocks "github.com/agglayer/aggkit/types/mocks"
 	common "github.com/ethereum/go-ethereum/common"
 	types "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient/simulated"
@@ -28,12 +29,11 @@ func Test_ReorgDetector(t *testing.T) {
 
 	// Create test DB dir
 	testDir := path.Join(t.TempDir(), "reorgdetectorTest_ReorgDetector.sqlite")
-
 	reorgDetector, err := New(clientL1.Client(),
 		Config{
 			DBPath:              testDir,
-			CheckReorgsInterval: aggkittypes.NewDuration(time.Millisecond * 100),
-			FinalizedBlock:      etherman.FinalizedBlock,
+			CheckReorgsInterval: cfgtypes.NewDuration(time.Millisecond * 100),
+			FinalizedBlock:      aggkittypes.FinalizedBlock,
 		}, L1)
 	require.NoError(t, err)
 
@@ -109,61 +109,108 @@ func Test_ReorgDetector(t *testing.T) {
 func TestGetTrackedBlocks(t *testing.T) {
 	clientL1 := simulated.NewBackend(nil, simulated.WithBlockGasLimit(10000000))
 	testDir := path.Join(t.TempDir(), "reorgdetector_TestGetTrackedBlocks.sqlite")
-	reorgDetector, err := New(clientL1.Client(), Config{DBPath: testDir, CheckReorgsInterval: aggkittypes.NewDuration(time.Millisecond * 100)}, L1)
+	reorgDetector, err := New(clientL1.Client(), Config{
+		DBPath:              testDir,
+		CheckReorgsInterval: cfgtypes.NewDuration(time.Millisecond * 100),
+	}, L1)
 	require.NoError(t, err)
-	list, err := reorgDetector.getTrackedBlocks()
-	require.NoError(t, err)
-	require.Equal(t, len(list), 0)
 
-	expectedList := make(map[string]*headersList)
-	headersMapFoo := make(map[uint64]header)
-	headerFoo2 := header{
-		Num:  2,
-		Hash: common.HexToHash("foofoo"),
-	}
-	err = reorgDetector.saveTrackedBlock("foo", headerFoo2)
-	require.NoError(t, err)
-	headersMapFoo[2] = headerFoo2
-	headerFoo3 := header{
-		Num:  3,
-		Hash: common.HexToHash("foofoofoo"),
-	}
-	err = reorgDetector.saveTrackedBlock("foo", headerFoo3)
-	require.NoError(t, err)
-	headersMapFoo[3] = headerFoo3
-	expectedList["foo"] = &headersList{
-		headers: headersMapFoo,
-	}
-	list, err = reorgDetector.getTrackedBlocks()
-	require.NoError(t, err)
-	require.Equal(t, expectedList, list)
+	t.Run("Initial empty tracked blocks", func(t *testing.T) {
+		list, err := reorgDetector.getTrackedBlocks()
+		require.NoError(t, err)
+		require.Empty(t, list, "Expected no tracked blocks at initialization")
+	})
 
-	headersMapBar := make(map[uint64]header)
-	headerBar2 := header{
-		Num:  2,
-		Hash: common.HexToHash("BarBar"),
-	}
-	err = reorgDetector.saveTrackedBlock("Bar", headerBar2)
-	require.NoError(t, err)
-	headersMapBar[2] = headerBar2
-	expectedList["Bar"] = &headersList{
-		headers: headersMapBar,
-	}
-	list, err = reorgDetector.getTrackedBlocks()
-	require.NoError(t, err)
-	require.Equal(t, expectedList, list)
+	t.Run("Tracked blocks for subscriber Foo", func(t *testing.T) {
+		headerFoo2 := header{Num: 2, Hash: common.HexToHash("foofoo")}
+		err := reorgDetector.saveTrackedBlock("Foo", headerFoo2)
+		require.NoError(t, err)
 
-	require.NoError(t, reorgDetector.loadTrackedHeaders())
-	_, ok := reorgDetector.subscriptions["foo"]
-	require.True(t, ok)
-	_, ok = reorgDetector.subscriptions["Bar"]
-	require.True(t, ok)
+		headerFoo3 := header{Num: 3, Hash: common.HexToHash("foofoofoo")}
+		err = reorgDetector.saveTrackedBlock("Foo", headerFoo3)
+		require.NoError(t, err)
+
+		expectedHeadersFoo := map[uint64]header{
+			2: headerFoo2,
+			3: headerFoo3,
+		}
+		expectedList := map[string]*headersList{
+			"Foo": {headers: expectedHeadersFoo},
+		}
+
+		list, err := reorgDetector.getTrackedBlocks()
+		require.NoError(t, err)
+		require.Equal(t, expectedList, list, "Unexpected tracked blocks for subscriber 'Foo'")
+	})
+
+	t.Run("Tracked blocks for subscribers Foo and Bar", func(t *testing.T) {
+		headerBar2 := header{Num: 2, Hash: common.HexToHash("barbar")}
+		err := reorgDetector.saveTrackedBlock("Bar", headerBar2)
+		require.NoError(t, err)
+
+		expectedList := map[string]*headersList{
+			"Bar": {
+				headers: map[uint64]header{
+					2: headerBar2,
+				},
+			},
+			"Foo": {
+				headers: map[uint64]header{
+					2: {Num: 2, Hash: common.HexToHash("foofoo")},
+					3: {Num: 3, Hash: common.HexToHash("foofoofoo")},
+				},
+			},
+		}
+
+		list, err := reorgDetector.getTrackedBlocks()
+		require.NoError(t, err)
+		require.Equal(t, expectedList, list, "Unexpected tracked blocks after adding subscriber 'Bar'")
+	})
+
+	t.Run("Tracked blocks for subscribers Foo, Bar and Zzz", func(t *testing.T) {
+		headerZzz6 := header{Num: 6, Hash: common.HexToHash("zzzzzz")}
+		err := reorgDetector.saveTrackedBlock("Zzz", headerZzz6)
+		require.NoError(t, err)
+
+		expectedList := map[string]*headersList{
+			"Bar": {
+				headers: map[uint64]header{
+					2: {Num: 2, Hash: common.HexToHash("barbar")},
+				},
+			},
+			"Foo": {
+				headers: map[uint64]header{
+					2: {Num: 2, Hash: common.HexToHash("foofoo")},
+					3: {Num: 3, Hash: common.HexToHash("foofoofoo")},
+				},
+			},
+			"Zzz": {
+				headers: map[uint64]header{
+					6: headerZzz6,
+				},
+			},
+		}
+
+		list, err := reorgDetector.getTrackedBlocks()
+		require.NoError(t, err)
+		require.Equal(t, expectedList, list, "Unexpected tracked blocks after adding subscriber 'Zzz'")
+	})
+
+	t.Run("Load tracked headers updates subscriptions", func(t *testing.T) {
+		require.NoError(t, reorgDetector.loadTrackedHeaders())
+		_, ok := reorgDetector.subscriptions["Foo"]
+		require.True(t, ok, "Expected subscription for 'Foo'")
+		_, ok = reorgDetector.subscriptions["Bar"]
+		require.True(t, ok, "Expected subscription for 'Bar'")
+		_, ok = reorgDetector.subscriptions["Zzz"]
+		require.True(t, ok, "Expected subscription for 'Zzz'")
+	})
 }
 
 func TestNotSubscribed(t *testing.T) {
 	clientL1 := simulated.NewBackend(nil, simulated.WithBlockGasLimit(10000000))
 	testDir := path.Join(t.TempDir(), "reorgdetectorTestNotSubscribed.sqlite")
-	reorgDetector, err := New(clientL1.Client(), Config{DBPath: testDir, CheckReorgsInterval: aggkittypes.NewDuration(time.Millisecond * 100)}, L1)
+	reorgDetector, err := New(clientL1.Client(), Config{DBPath: testDir, CheckReorgsInterval: cfgtypes.NewDuration(time.Millisecond * 100)}, L1)
 	require.NoError(t, err)
 	err = reorgDetector.AddBlockToTrack(context.Background(), "foo", 1, common.Hash{})
 	require.True(t, strings.Contains(err.Error(), "is not subscribed"))
@@ -180,12 +227,12 @@ func TestDetectReorgs(t *testing.T) {
 		t.Parallel()
 
 		lastFinalizedBlock := &types.Header{Number: big.NewInt(8)}
-		client := NewEthClientMock(t)
+		client := aggkittypesmocks.NewBaseEthereumClienter(t)
 		client.On("HeaderByNumber", ctx, big.NewInt(int64(rpc.FinalizedBlockNumber))).Return(lastFinalizedBlock, nil)
 		client.On("HeaderByNumber", ctx, trackedBlock.Number).Return(trackedBlock, nil)
 
 		testDir := path.Join(t.TempDir(), "reorgdetectorTestDetectReorgs.sqlite")
-		reorgDetector, err := New(client, Config{DBPath: testDir, CheckReorgsInterval: aggkittypes.NewDuration(time.Millisecond * 100)}, L1)
+		reorgDetector, err := New(client, Config{DBPath: testDir, CheckReorgsInterval: cfgtypes.NewDuration(time.Millisecond * 100)}, L1)
 		require.NoError(t, err)
 
 		_, err = reorgDetector.Subscribe(syncerID)
@@ -207,11 +254,11 @@ func TestDetectReorgs(t *testing.T) {
 		t.Parallel()
 
 		lastFinalizedBlock := trackedBlock
-		client := NewEthClientMock(t)
+		client := aggkittypesmocks.NewBaseEthereumClienter(t)
 		client.On("HeaderByNumber", ctx, big.NewInt(int64(rpc.FinalizedBlockNumber))).Return(lastFinalizedBlock, nil)
 
 		testDir := path.Join(t.TempDir(), "reorgdetectorTestDetectReorgs.sqlite")
-		reorgDetector, err := New(client, Config{DBPath: testDir, CheckReorgsInterval: aggkittypes.NewDuration(time.Millisecond * 100)}, L1)
+		reorgDetector, err := New(client, Config{DBPath: testDir, CheckReorgsInterval: cfgtypes.NewDuration(time.Millisecond * 100)}, L1)
 		require.NoError(t, err)
 
 		_, err = reorgDetector.Subscribe(syncerID)
@@ -231,12 +278,12 @@ func TestDetectReorgs(t *testing.T) {
 		lastFinalizedBlock := &types.Header{Number: big.NewInt(5)}
 		reorgedTrackedBlock := &types.Header{Number: trackedBlock.Number, Extra: []byte("reorged")} // Different hash
 
-		client := NewEthClientMock(t)
+		client := aggkittypesmocks.NewBaseEthereumClienter(t)
 		client.On("HeaderByNumber", ctx, big.NewInt(int64(rpc.FinalizedBlockNumber))).Return(lastFinalizedBlock, nil)
 		client.On("HeaderByNumber", ctx, trackedBlock.Number).Return(reorgedTrackedBlock, nil)
 
 		testDir := path.Join(t.TempDir(), "reorgdetectorTestDetectReorgs.sqlite")
-		reorgDetector, err := New(client, Config{DBPath: testDir, CheckReorgsInterval: aggkittypes.NewDuration(time.Millisecond * 100)}, L1)
+		reorgDetector, err := New(client, Config{DBPath: testDir, CheckReorgsInterval: cfgtypes.NewDuration(time.Millisecond * 100)}, L1)
 		require.NoError(t, err)
 
 		subscription, err := reorgDetector.Subscribe(syncerID)
@@ -262,4 +309,53 @@ func TestDetectReorgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 0, len(trackedBlocks)) // shouldn't be any since a reorg happened on that block
 	})
+}
+
+func TestLoadTrackedHeaders_ConcurrentWithSaveTrackedBlock(t *testing.T) {
+	clientL1 := simulated.NewBackend(nil, simulated.WithBlockGasLimit(10000000))
+	testDir := path.Join(t.TempDir(), "reorgdetectorTestConcurrentSave.sqlite")
+	reorgDetector, err := New(clientL1.Client(), Config{
+		DBPath:              testDir,
+		CheckReorgsInterval: cfgtypes.NewDuration(100 * time.Millisecond),
+	}, L1)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	numSaves := 20
+	numLoads := 20
+
+	wg.Add(2)
+
+	// Goroutine for saving tracked blocks
+	go func() {
+		defer wg.Done()
+		for i := range numSaves {
+			header := header{
+				Num:  uint64(i),
+				Hash: common.BigToHash(big.NewInt(int64(i))),
+			}
+			err := reorgDetector.saveTrackedBlock("sub", header)
+			require.NoError(t, err)
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	// Goroutine for loading tracked headers (rebuilds in-memory maps)
+	go func() {
+		defer wg.Done()
+		for range numLoads {
+			err := reorgDetector.loadTrackedHeaders()
+			require.NoError(t, err)
+			time.Sleep(7 * time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
+
+	// Final verification
+	reorgDetector.trackedBlocksLock.RLock()
+	defer reorgDetector.trackedBlocksLock.RUnlock()
+	tracked, ok := reorgDetector.trackedBlocks["sub"]
+	require.True(t, ok)
+	require.GreaterOrEqual(t, len(tracked.getSorted()), 1)
 }

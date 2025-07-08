@@ -3,27 +3,33 @@ package types
 import (
 	"fmt"
 
+	agglayertypes "github.com/agglayer/aggkit/agglayer/types"
 	"github.com/agglayer/aggkit/bridgesync"
+	aggkitcommon "github.com/agglayer/aggkit/common"
+	"github.com/ethereum/go-ethereum/common"
 )
 
-const (
-	EstimatedSizeBridgeExit = 230
-	EstimatedSizeClaim      = 8000
-	byteArrayJSONSizeFactor = 1.5
-)
+const claimSizeFactor = 200 // Size factor for claims in bytes
 
 // CertificateBuildParams is a struct that holds the parameters to build a certificate
 type CertificateBuildParams struct {
-	FromBlock uint64
-	ToBlock   uint64
-	Bridges   []bridgesync.Bridge
-	Claims    []bridgesync.Claim
-	CreatedAt uint32
+	FromBlock                      uint64
+	ToBlock                        uint64
+	Bridges                        []bridgesync.Bridge
+	Claims                         []bridgesync.Claim
+	CreatedAt                      uint32
+	RetryCount                     int
+	LastSentCertificate            *CertificateHeader
+	L1InfoTreeRootFromWhichToProve common.Hash
+	L1InfoTreeLeafCount            uint32
+	AggchainProof                  *AggchainProof
+	CertificateType                CertificateType
+	ExtraData                      string
 }
 
 func (c *CertificateBuildParams) String() string {
-	return fmt.Sprintf("FromBlock: %d, ToBlock: %d, numBridges: %d, numClaims: %d, createdAt: %d",
-		c.FromBlock, c.ToBlock, c.NumberOfBridges(), c.NumberOfClaims(), c.CreatedAt)
+	return fmt.Sprintf("Type: %s FromBlock: %d, ToBlock: %d, numBridges: %d, numClaims: %d, createdAt: %d",
+		c.CertificateType, c.FromBlock, c.ToBlock, c.NumberOfBridges(), c.NumberOfClaims(), c.CreatedAt)
 }
 
 // Range create a new CertificateBuildParams with the given range
@@ -32,13 +38,32 @@ func (c *CertificateBuildParams) Range(fromBlock, toBlock uint64) (*CertificateB
 		return c, nil
 	}
 	if c.FromBlock > fromBlock || c.ToBlock < toBlock {
-		return nil, fmt.Errorf("invalid range")
+		return nil, fmt.Errorf("invalid range. FromBlock %d and ToBlock %d are not within "+
+			"the certificate range FromBlock %d and ToBlock %d",
+			fromBlock, toBlock, c.FromBlock, c.ToBlock)
 	}
+
+	if fromBlock > toBlock {
+		return nil, fmt.Errorf("invalid range. FromBlock %d is greater than toBlock %d", fromBlock, toBlock)
+	}
+
+	span := toBlock - fromBlock + 1
+	fullSpan := c.ToBlock - c.FromBlock + 1
+
 	newCert := &CertificateBuildParams{
 		FromBlock: fromBlock,
 		ToBlock:   toBlock,
-		Bridges:   make([]bridgesync.Bridge, 0),
-		Claims:    make([]bridgesync.Claim, 0),
+		Bridges: make([]bridgesync.Bridge, 0,
+			aggkitcommon.EstimateSliceCapacity(len(c.Bridges), span, fullSpan)),
+		Claims: make([]bridgesync.Claim, 0,
+			aggkitcommon.EstimateSliceCapacity(len(c.Claims), span, fullSpan)),
+		CreatedAt:                      c.CreatedAt,
+		RetryCount:                     c.RetryCount,
+		LastSentCertificate:            c.LastSentCertificate,
+		AggchainProof:                  c.AggchainProof,
+		L1InfoTreeRootFromWhichToProve: c.L1InfoTreeRootFromWhichToProve,
+		L1InfoTreeLeafCount:            c.L1InfoTreeLeafCount,
+		CertificateType:                c.CertificateType,
 	}
 
 	for _, bridge := range c.Bridges {
@@ -84,23 +109,38 @@ func (c *CertificateBuildParams) EstimatedSize() uint {
 	if c == nil {
 		return 0
 	}
-	sizeBridges := int(0)
+	sizeBridges := float64(0)
 	for _, bridge := range c.Bridges {
-		sizeBridges += EstimatedSizeBridgeExit
-		sizeBridges += int(byteArrayJSONSizeFactor * float32(len(bridge.Metadata)))
+		sizeBridges += agglayertypes.EstimatedBridgeExitSize
+		sizeBridges += float64(len(bridge.Metadata))
 	}
 
-	sizeClaims := int(0)
+	sizeClaims := float64(0)
 	for _, claim := range c.Claims {
-		sizeClaims += EstimatedSizeClaim
-		sizeClaims += int(byteArrayJSONSizeFactor * float32(len(claim.Metadata)))
+		sizeClaims += agglayertypes.EstimatedImportedBridgeExitSize
+		sizeClaims += float64(len(claim.Metadata))
 	}
-	return uint(sizeBridges + sizeClaims)
+
+	sizeAggchainData := float64(0)
+	switch c.CertificateType {
+	case CertificateTypeFEP:
+		sizeAggchainData += agglayertypes.EstimatedAggchainProofSize
+		sizeAggchainData += float64(len(c.Claims) * claimSizeFactor) // for each claim the proof gets bigger by some size
+	default:
+		sizeAggchainData += agglayertypes.EstimatedAggchainSignatureSize
+	}
+
+	return uint(sizeBridges + sizeClaims + sizeAggchainData)
 }
 
 // IsEmpty returns true if the certificate is empty
 func (c *CertificateBuildParams) IsEmpty() bool {
 	return c.NumberOfBridges() == 0 && c.NumberOfClaims() == 0
+}
+
+// IsARetry returns true if the certificate is a retry
+func (c *CertificateBuildParams) IsARetry() bool {
+	return c != nil && c.RetryCount > 0 && c.LastSentCertificate != nil
 }
 
 // MaxDepoitCount returns the maximum deposit count in the certificate

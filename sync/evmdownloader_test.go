@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agglayer/aggkit/etherman"
 	"github.com/agglayer/aggkit/log"
+	aggkittypes "github.com/agglayer/aggkit/types"
+	aggkittypesmocks "github.com/agglayer/aggkit/types/mocks"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -37,6 +38,8 @@ func TestGetEventsByBlockRange(t *testing.T) {
 		inputLogs          []types.Log
 		fromBlock, toBlock uint64
 		expectedBlocks     EVMBlocks
+		setupMocks         func(*aggkittypesmocks.BaseEthereumClienter)
+		contextCancelled   bool
 	}
 	testCases := []testCase{}
 	ctx := context.Background()
@@ -155,26 +158,178 @@ func TestGetEventsByBlockRange(t *testing.T) {
 	}
 	testCases = append(testCases, case3)
 
-	for _, tc := range testCases {
-		query := ethereum.FilterQuery{
-			FromBlock: new(big.Int).SetUint64(tc.fromBlock),
-			Addresses: []common.Address{contractAddr},
-			ToBlock:   new(big.Int).SetUint64(tc.toBlock),
-		}
-		clientMock.
-			On("FilterLogs", mock.Anything, query).
-			Return(tc.inputLogs, nil)
-		for _, b := range tc.expectedBlocks {
-			clientMock.
-				On("HeaderByNumber", mock.Anything, big.NewInt(int64(b.Num))).
-				Return(&types.Header{
-					Number:     big.NewInt(int64(b.Num)),
-					ParentHash: common.HexToHash("foo"),
-				}, nil)
-		}
+	// case 4: context cancelled
+	case4 := testCase{
+		description:      "case 4: context cancelled",
+		inputLogs:        []types.Log{},
+		fromBlock:        1,
+		toBlock:          3,
+		expectedBlocks:   nil,
+		contextCancelled: true,
+	}
+	testCases = append(testCases, case4)
 
-		actualBlocks := d.GetEventsByBlockRange(ctx, tc.fromBlock, tc.toBlock)
-		require.Equal(t, tc.expectedBlocks, actualBlocks, tc.description)
+	// case 5: block hash mismatch with retry success
+	logC5, updateC5 := generateEvent(10)
+	logsC5 := []types.Log{*logC5}
+	blocksC5 := EVMBlocks{
+		{
+			EVMBlockHeader: EVMBlockHeader{
+				Num:        logC5.BlockNumber,
+				Hash:       logC5.BlockHash,
+				ParentHash: common.HexToHash("foo"),
+			},
+			Events: []interface{}{updateC5},
+		},
+	}
+	case5 := testCase{
+		description:    "case 5: block hash mismatch with retry success",
+		inputLogs:      logsC5,
+		fromBlock:      10,
+		toBlock:        10,
+		expectedBlocks: blocksC5,
+		setupMocks: func(clientMock *aggkittypesmocks.BaseEthereumClienter) {
+			// First call returns different hash (mismatch)
+			clientMock.EXPECT().HeaderByNumber(mock.Anything, big.NewInt(10)).
+				Return(&types.Header{
+					Number:     big.NewInt(10),
+					ParentHash: common.HexToHash("foo"),
+				}, nil).Once()
+			// Second call returns correct hash
+			clientMock.EXPECT().HeaderByNumber(mock.Anything, big.NewInt(10)).
+				Return(&types.Header{
+					Number:     big.NewInt(10),
+					ParentHash: common.HexToHash("foo"),
+				}, nil).Once()
+		},
+	}
+	testCases = append(testCases, case5)
+
+	// case 6: block hash mismatch with max retries exceeded
+	logC6, _ := generateEvent(15)
+	logsC6 := []types.Log{*logC6}
+	case6 := testCase{
+		description:    "case 6: block hash mismatch with max retries exceeded",
+		inputLogs:      logsC6,
+		fromBlock:      15,
+		toBlock:        15,
+		expectedBlocks: nil,
+		setupMocks: func(clientMock *aggkittypesmocks.BaseEthereumClienter) {
+			// Return a different hash than the log's block hash for all retry attempts
+			// This will trigger the retry logic and eventually exceed max retries
+			for i := 0; i < MaxRetryCountBlockHashMismatch+1; i++ {
+				clientMock.EXPECT().HeaderByNumber(mock.Anything, big.NewInt(15)).
+					Return(&types.Header{
+						Number:     big.NewInt(15),
+						ParentHash: common.HexToHash("bar"), // Different parent hash to create different block hash
+						// The hash will be different from logC6.BlockHash, causing mismatch
+					}, nil).Once()
+			}
+		},
+	}
+	testCases = append(testCases, case6)
+
+	// case 7: logs with removed flag should be filtered out
+	logC7_1, _ := generateEvent(20)
+	logC7_2, updateC7_2 := generateEvent(20)
+	logC7_1.Removed = true // This log should be filtered out
+	logsC7 := []types.Log{*logC7_1, *logC7_2}
+	blocksC7 := EVMBlocks{
+		{
+			EVMBlockHeader: EVMBlockHeader{
+				Num:        logC7_2.BlockNumber,
+				Hash:       logC7_2.BlockHash,
+				ParentHash: common.HexToHash("foo"),
+			},
+			Events: []interface{}{updateC7_2}, // Only the non-removed log
+		},
+	}
+	case7 := testCase{
+		description:    "case 7: logs with removed flag should be filtered out",
+		inputLogs:      logsC7,
+		fromBlock:      20,
+		toBlock:        20,
+		expectedBlocks: blocksC7,
+	}
+	testCases = append(testCases, case7)
+
+	// case 8: logs with non-matching topics should be filtered out
+	logC8_1, updateC8_1 := generateEvent(25)
+	logC8_2 := &types.Log{
+		Address:     contractAddr,
+		BlockNumber: 25,
+		Topics: []common.Hash{
+			common.HexToHash("0x1234567890abcdef"), // Non-matching topic
+			common.HexToHash("0xabcdef1234567890"),
+		},
+		BlockHash: logC8_1.BlockHash,
+		Data:      nil,
+	}
+	logsC8 := []types.Log{*logC8_1, *logC8_2}
+	blocksC8 := EVMBlocks{
+		{
+			EVMBlockHeader: EVMBlockHeader{
+				Num:        logC8_1.BlockNumber,
+				Hash:       logC8_1.BlockHash,
+				ParentHash: common.HexToHash("foo"),
+			},
+			Events: []interface{}{updateC8_1}, // Only the matching topic log
+		},
+	}
+	case8 := testCase{
+		description:    "case 8: logs with non-matching topics should be filtered out",
+		inputLogs:      logsC8,
+		fromBlock:      25,
+		toBlock:        25,
+		expectedBlocks: blocksC8,
+	}
+	testCases = append(testCases, case8)
+
+	for i, tc := range testCases {
+		t.Run(fmt.Sprintf("test_case_%d_%s", i, tc.description), func(t *testing.T) {
+			// Reset mock for each test case
+			clientMock.ExpectedCalls = nil
+
+			query := ethereum.FilterQuery{
+				FromBlock: new(big.Int).SetUint64(tc.fromBlock),
+				Addresses: []common.Address{contractAddr},
+				ToBlock:   new(big.Int).SetUint64(tc.toBlock),
+			}
+
+			if tc.contextCancelled {
+				// Create a cancelled context
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel()
+				clientMock.EXPECT().FilterLogs(cancelledCtx, query).Return(tc.inputLogs, nil)
+			} else {
+				clientMock.EXPECT().FilterLogs(mock.Anything, query).Return(tc.inputLogs, nil)
+			}
+
+			// Setup custom mocks if provided
+			if tc.setupMocks != nil {
+				tc.setupMocks(clientMock)
+			} else {
+				// Default mock setup for block headers
+				for _, b := range tc.expectedBlocks {
+					clientMock.EXPECT().HeaderByNumber(mock.Anything, big.NewInt(int64(b.Num))).
+						Return(&types.Header{
+							Number:     big.NewInt(int64(b.Num)),
+							ParentHash: common.HexToHash("foo"),
+						}, nil)
+				}
+			}
+
+			var actualBlocks EVMBlocks
+			if tc.contextCancelled {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel()
+				actualBlocks = d.GetEventsByBlockRange(cancelledCtx, tc.fromBlock, tc.toBlock)
+			} else {
+				actualBlocks = d.GetEventsByBlockRange(ctx, tc.fromBlock, tc.toBlock)
+			}
+
+			require.Equal(t, tc.expectedBlocks, actualBlocks, tc.description)
+		})
 	}
 }
 
@@ -294,10 +449,10 @@ func TestFilterQueryToString(t *testing.T) {
 }
 
 func TestGetLogs(t *testing.T) {
-	mockEthClient := NewL2Mock(t)
+	mockEthClient := aggkittypesmocks.NewBaseEthereumClienter(t)
 	sut := EVMDownloaderImplementation{
 		ethClient:        mockEthClient,
-		adressessToQuery: []common.Address{contractAddr},
+		addressesToQuery: []common.Address{contractAddr},
 		log:              log.WithFields("test", "EVMDownloaderImplementation"),
 		rh: &RetryHandler{
 			RetryAfterErrorPeriod:      time.Millisecond,
@@ -312,24 +467,7 @@ func TestGetLogs(t *testing.T) {
 }
 
 func TestDownloadBeforeFinalized(t *testing.T) {
-	mockEthDownloader := NewEVMDownloaderMock(t)
-
-	ctx := context.Background()
-	ctx1, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	downloader, _ := NewTestDownloader(t, time.Millisecond)
-	downloader.EVMDownloaderInterface = mockEthDownloader
-
-	steps := []struct {
-		finalizedBlock          uint64
-		fromBlock, toBlock      uint64
-		eventsReponse           EVMBlocks
-		waitForNewBlocks        bool
-		waitForNewBlocksRequest uint64
-		waitForNewBlockReply    uint64
-		getBlockHeader          *EVMBlockHeader
-	}{
+	steps := []evmTestStep{
 		{finalizedBlock: 33, fromBlock: 1, toBlock: 11, waitForNewBlocks: true, waitForNewBlocksRequest: 0, waitForNewBlockReply: 35, getBlockHeader: &EVMBlockHeader{Num: 11}},
 		{finalizedBlock: 33, fromBlock: 12, toBlock: 22, eventsReponse: EVMBlocks{createEVMBlock(t, 14, true)}, getBlockHeader: &EVMBlockHeader{Num: 22}},
 		// It returns the last block of range, so it don't need to create a empty one
@@ -349,41 +487,18 @@ func TestDownloadBeforeFinalized(t *testing.T) {
 		{finalizedBlock: 61, fromBlock: 61, toBlock: 61, waitForNewBlocks: true, waitForNewBlocksRequest: 60, waitForNewBlockReply: 61, getBlockHeader: &EVMBlockHeader{Num: 61}},
 		{finalizedBlock: 61, fromBlock: 62, toBlock: 62, waitForNewBlocks: true, waitForNewBlocksRequest: 61, waitForNewBlockReply: 62},
 	}
-	for i := 0; i < len(steps); i++ {
-		log.Info("iteration: ", i, "------------------------------------------------")
-		downloadCh := make(chan EVMBlock, 100)
-		downloader, _ := NewTestDownloader(t, time.Millisecond)
-		downloader.EVMDownloaderInterface = mockEthDownloader
-		downloader.setStopDownloaderOnIterationN(i + 1)
-		expectedBlocks := EVMBlocks{}
-		for _, step := range steps[:i+1] {
-			mockEthDownloader.On("GetLastFinalizedBlock", mock.Anything).Return(&types.Header{Number: big.NewInt(int64(step.finalizedBlock))}, nil).Once()
-			if step.waitForNewBlocks {
-				mockEthDownloader.On("WaitForNewBlocks", mock.Anything, step.waitForNewBlocksRequest).Return(step.waitForNewBlockReply).Once()
-			}
-			mockEthDownloader.On("GetEventsByBlockRange", mock.Anything, step.fromBlock, step.toBlock).
-				Return(step.eventsReponse, false).Once()
-			for _, eventBlock := range step.eventsReponse {
-				expectedBlocks = append(expectedBlocks, eventBlock)
-			}
-			if step.getBlockHeader != nil {
-				log.Infof("iteration:%d : GetBlockHeader(%d) ", i, step.getBlockHeader.Num)
-				mockEthDownloader.On("GetBlockHeader", mock.Anything, step.getBlockHeader.Num).Return(*step.getBlockHeader, false).Once()
-				expectedBlocks = append(expectedBlocks, &EVMBlock{
-					EVMBlockHeader:   *step.getBlockHeader,
-					IsFinalizedBlock: step.getBlockHeader.Num <= step.finalizedBlock,
-				})
-			}
-		}
-		downloader.Download(ctx1, 1, downloadCh)
-		mockEthDownloader.AssertExpectations(t)
-		for _, expectedBlock := range expectedBlocks {
-			log.Debugf("waiting block %d ", expectedBlock.Num)
-			actualBlock := <-downloadCh
-			log.Debugf("block %d received!", actualBlock.Num)
-			require.Equal(t, *expectedBlock, actualBlock)
-		}
+	runSteps(t, 1, steps)
+}
+
+func TestCaseAskLastBlockIfFinalitySameAsTargetBlock(t *testing.T) {
+	steps := []evmTestStep{
+		{finalizedBlock: 105, fromBlock: 99, toBlock: 105, waitForNewBlocks: true, waitForNewBlocksRequest: 0, waitForNewBlockReply: 105, getBlockHeader: &EVMBlockHeader{Num: 105}},
+		{finalizedBlock: 110, fromBlock: 106, toBlock: 110, waitForNewBlocks: true, waitForNewBlocksRequest: 105, waitForNewBlockReply: 110, getBlockHeader: &EVMBlockHeader{Num: 110}},
+		// Here is the bug:
+		// - the range 111-115 returns block: 106. So the code must emit the block 106 and also the block 115 as empty (last block)
+		{finalizedBlock: 115, fromBlock: 111, toBlock: 115, waitForNewBlocks: true, waitForNewBlocksRequest: 110, waitForNewBlockReply: 115, eventsReponse: EVMBlocks{createEVMBlock(t, 106, false)}, getBlockHeader: &EVMBlockHeader{Num: 115}},
 	}
+	runSteps(t, 99, steps)
 }
 
 func buildAppender() LogAppenderMap {
@@ -395,18 +510,18 @@ func buildAppender() LogAppenderMap {
 	return appender
 }
 
-func NewTestDownloader(t *testing.T, retryPeriod time.Duration) (*EVMDownloader, *L2Mock) {
+func NewTestDownloader(t *testing.T, retryPeriod time.Duration) (*EVMDownloader, *aggkittypesmocks.BaseEthereumClienter) {
 	t.Helper()
 
 	rh := &RetryHandler{
 		MaxRetryAttemptsAfterError: 5,
 		RetryAfterErrorPeriod:      retryPeriod,
 	}
-	clientMock := NewL2Mock(t)
+	clientMock := aggkittypesmocks.NewBaseEthereumClienter(t)
 	d, err := NewEVMDownloader("test",
-		clientMock, syncBlockChunck, etherman.LatestBlock, time.Millisecond,
+		clientMock, syncBlockChunck, aggkittypes.LatestBlock, time.Millisecond,
 		buildAppender(), []common.Address{contractAddr}, rh,
-		etherman.FinalizedBlock,
+		aggkittypes.FinalizedBlock,
 	)
 	require.NoError(t, err)
 	return d, clientMock
@@ -422,5 +537,61 @@ func createEVMBlock(t *testing.T, num uint64, isSafeBlock bool) *EVMBlock {
 			ParentHash: common.HexToHash(fmt.Sprintf("0x%.2X", num-1)),
 			Timestamp:  uint64(time.Now().Unix()),
 		},
+	}
+}
+
+type evmTestStep struct {
+	finalizedBlock          uint64
+	fromBlock, toBlock      uint64
+	eventsReponse           EVMBlocks
+	waitForNewBlocks        bool
+	waitForNewBlocksRequest uint64
+	waitForNewBlockReply    uint64
+	getBlockHeader          *EVMBlockHeader
+}
+
+func runSteps(t *testing.T, fromBlock uint64, steps []evmTestStep) {
+	t.Helper()
+	mockEthDownloader := NewEVMDownloaderMock(t)
+
+	ctx := context.Background()
+	ctx1, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	downloader, _ := NewTestDownloader(t, time.Millisecond)
+	downloader.EVMDownloaderInterface = mockEthDownloader
+
+	for i := 0; i < len(steps); i++ {
+		log.Info("iteration: ", i, "------------------------------------------------")
+		downloadCh := make(chan EVMBlock, 100)
+		downloader, _ := NewTestDownloader(t, time.Millisecond)
+		downloader.EVMDownloaderInterface = mockEthDownloader
+		downloader.setStopDownloaderOnIterationN(i + 1)
+		expectedBlocks := EVMBlocks{}
+		for _, step := range steps[:i+1] {
+			mockEthDownloader.On("GetLastFinalizedBlock", mock.Anything).Return(&types.Header{Number: big.NewInt(int64(step.finalizedBlock))}, nil).Once()
+			if step.waitForNewBlocks {
+				mockEthDownloader.On("WaitForNewBlocks", mock.Anything, step.waitForNewBlocksRequest).Return(step.waitForNewBlockReply).Once()
+			}
+			mockEthDownloader.On("GetEventsByBlockRange", mock.Anything, step.fromBlock, step.toBlock).
+				Return(step.eventsReponse, false).Once()
+			expectedBlocks = append(expectedBlocks, step.eventsReponse...)
+			if step.getBlockHeader != nil {
+				log.Infof("iteration:%d : GetBlockHeader(%d) ", i, step.getBlockHeader.Num)
+				mockEthDownloader.On("GetBlockHeader", mock.Anything, step.getBlockHeader.Num).Return(*step.getBlockHeader, false).Once()
+				expectedBlocks = append(expectedBlocks, &EVMBlock{
+					EVMBlockHeader:   *step.getBlockHeader,
+					IsFinalizedBlock: step.getBlockHeader.Num <= step.finalizedBlock,
+				})
+			}
+		}
+		downloader.Download(ctx1, fromBlock, downloadCh)
+		mockEthDownloader.AssertExpectations(t)
+		for _, expectedBlock := range expectedBlocks {
+			log.Debugf("waiting block %d ", expectedBlock.Num)
+			actualBlock := <-downloadCh
+			log.Debugf("block %d received!", actualBlock.Num)
+			require.Equal(t, *expectedBlock, actualBlock)
+		}
 	}
 }

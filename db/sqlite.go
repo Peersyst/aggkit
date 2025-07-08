@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -14,6 +15,8 @@ const (
 
 var (
 	ErrNotFound = errors.New("not found")
+	tableKVName = "key_value"
+	funcTimeNow = time.Now
 )
 
 // NewSQLiteDB creates a new SQLite DB

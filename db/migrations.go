@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/agglayer/aggkit/db/migrations"
 	"github.com/agglayer/aggkit/db/types"
 	"github.com/agglayer/aggkit/log"
 	_ "github.com/mattn/go-sqlite3"
@@ -12,8 +13,9 @@ import (
 )
 
 const (
-	upDownSeparator  = "-- +migrate Up"
-	dbPrefixReplacer = "/*dbprefix*/"
+	UpDownSeparator   = "-- +migrate Up"
+	dbPrefixReplacer  = "/*dbprefix*/"
+	NoLimitMigrations = 0 // indicate that there is no limit on the number of migrations to run
 )
 
 // RunMigrations will execute pending migrations if needed to keep
@@ -27,11 +29,29 @@ func RunMigrations(dbPath string, migrations []types.Migration) error {
 	return RunMigrationsDB(log.GetDefaultLogger(), db, migrations)
 }
 
-func RunMigrationsDB(logger *log.Logger, db *sql.DB, migrations []types.Migration) error {
+func RunMigrationsDB(logger *log.Logger, db *sql.DB, migrationsParam []types.Migration) error {
+	return RunMigrationsDBExtended(logger, db, migrationsParam, migrate.Up, NoLimitMigrations)
+}
+
+// RunMigrationsDBExtended is an extended version of RunMigrationsDB that allows
+// dir: can be migrate.Up or migrate.Down
+// maxMigrations: Will apply at most `max` migrations. Pass 0 for no limit (or use Exec)
+func RunMigrationsDBExtended(logger *log.Logger,
+	db *sql.DB,
+	migrationsParam []types.Migration,
+	dir migrate.MigrationDirection,
+	maxMigrations int) error {
 	migs := &migrate.MemoryMigrationSource{Migrations: []*migrate.Migration{}}
-	for _, m := range migrations {
+	fullmigrations := migrationsParam
+	// In case of partial execution we ignore the base migrations
+	if maxMigrations == NoLimitMigrations {
+		fullmigrations = append(fullmigrations, migrations.GetBaseMigrations()...)
+	} else {
+		migrate.SetIgnoreUnknown(true)
+	}
+	for _, m := range fullmigrations {
 		prefixed := strings.ReplaceAll(m.SQL, dbPrefixReplacer, m.Prefix)
-		splitted := strings.Split(prefixed, upDownSeparator)
+		splitted := strings.Split(prefixed, UpDownSeparator)
 		migs.Migrations = append(migs.Migrations, &migrate.Migration{
 			Id:   m.Prefix + m.ID,
 			Up:   []string{splitted[1]},
@@ -39,15 +59,21 @@ func RunMigrationsDB(logger *log.Logger, db *sql.DB, migrations []types.Migratio
 		})
 	}
 
-	logger.Debugf("running migrations:")
+	var listMigrations strings.Builder
 	for _, m := range migs.Migrations {
-		logger.Debugf("%+v", m.Id)
-	}
-	nMigrations, err := migrate.Exec(db, "sqlite3", migs, migrate.Up)
-	if err != nil {
-		return fmt.Errorf("error executing migration %w", err)
+		listMigrations.WriteString(m.Id + ", ")
 	}
 
-	logger.Infof("successfully ran %d migrations", nMigrations)
+	logger.Debugf("running migrations: (max %d/%d) migrations: %s", maxMigrations,
+		len(migs.Migrations),
+		listMigrations.String())
+	nMigrations, err := migrate.ExecMax(db, "sqlite3", migs, dir, maxMigrations)
+
+	if err != nil {
+		return fmt.Errorf("error executing migration (max %d/%d) migrations: %s . Err: %w",
+			maxMigrations, len(migs.Migrations), listMigrations.String(), err)
+	}
+
+	logger.Infof("successfully ran %d migrations from migrations: %s", nMigrations, listMigrations.String())
 	return nil
 }

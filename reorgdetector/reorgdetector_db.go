@@ -1,10 +1,14 @@
 package reorgdetector
 
 import (
+	context "context"
+	"database/sql"
 	"errors"
 	"fmt"
 
+	"github.com/agglayer/aggkit"
 	"github.com/agglayer/aggkit/db"
+	common "github.com/ethereum/go-ethereum/common"
 	"github.com/russross/meddler"
 )
 
@@ -24,27 +28,22 @@ func (rd *ReorgDetector) getTrackedBlocks() (map[string]*headersList, error) {
 	}
 	currentID := headersWithID[0].SubscriberID
 	currentHeaders := []header{}
-	for i := 0; i < len(headersWithID); i++ {
-		if i == len(headersWithID)-1 {
-			currentHeaders = append(currentHeaders, header{
-				Num:  headersWithID[i].Num,
-				Hash: headersWithID[i].Hash,
-			})
+	for _, row := range headersWithID {
+		// If the subscriber ID changes, save the current group
+		if row.SubscriberID != currentID {
 			trackedBlocks[currentID] = newHeadersList(currentHeaders...)
-		} else if headersWithID[i].SubscriberID != currentID {
-			trackedBlocks[currentID] = newHeadersList(currentHeaders...)
-			currentHeaders = []header{{
-				Num:  headersWithID[i].Num,
-				Hash: headersWithID[i].Hash,
-			}}
-			currentID = headersWithID[i].SubscriberID
-		} else {
-			currentHeaders = append(currentHeaders, header{
-				Num:  headersWithID[i].Num,
-				Hash: headersWithID[i].Hash,
-			})
+			currentID = row.SubscriberID
+			currentHeaders = nil
 		}
+
+		currentHeaders = append(currentHeaders, header{
+			Num:  row.Num,
+			Hash: row.Hash,
+		})
 	}
+
+	// Add the final group of headers after the loop
+	trackedBlocks[currentID] = newHeadersList(currentHeaders...)
 
 	return trackedBlocks, nil
 }
@@ -77,4 +76,35 @@ func (rd *ReorgDetector) removeTrackedBlockRange(id string, fromBlock, toBlock u
 		fromBlock, toBlock, id,
 	)
 	return err
+}
+
+type ReorgEvent struct {
+	DetectedAt   int64       `meddler:"detected_at"`
+	FromBlock    uint64      `meddler:"from_block"`
+	ToBlock      uint64      `meddler:"to_block"`
+	SubscriberID string      `meddler:"subscriber_id"`
+	TrackedHash  common.Hash `meddler:"tracked_hash,hash"`
+	CurrentHash  common.Hash `meddler:"current_hash,hash"`
+	Version      string      `meddler:"version"`
+}
+
+func (rd *ReorgDetector) insertReorgEvent(event ReorgEvent) error {
+	if event.Version == "" {
+		event.Version = aggkit.GetVersion().Brief()
+	}
+	return meddler.Insert(rd.db, "reorg_event", &event)
+}
+
+// GetLastReorgEvent returns the the last ReorgEvent stored in reorg_event table
+func (rd *ReorgDetector) GetLastReorgEvent(ctx context.Context) (ReorgEvent, error) {
+	query := `SELECT * FROM reorg_event ORDER BY detected_at DESC LIMIT 1;`
+	var rEvent ReorgEvent
+	if err := meddler.QueryRow(rd.db, &rEvent, query); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ReorgEvent{}, nil
+		}
+		return ReorgEvent{}, err
+	}
+
+	return rEvent, nil
 }

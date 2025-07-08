@@ -8,7 +8,10 @@ import (
 	"fmt"
 	mutex "sync"
 
+	aggkitcommon "github.com/agglayer/aggkit/common"
 	"github.com/agglayer/aggkit/db"
+	"github.com/agglayer/aggkit/db/compatibility"
+	dbtypes "github.com/agglayer/aggkit/db/types"
 	"github.com/agglayer/aggkit/l1infotreesync/migrations"
 	"github.com/agglayer/aggkit/log"
 	"github.com/agglayer/aggkit/sync"
@@ -33,6 +36,7 @@ type processor struct {
 	halted         bool
 	haltedReason   string
 	log            *log.Logger
+	compatibility.CompatibilityDataStorager[sync.RuntimeData]
 }
 
 // UpdateL1InfoTree representation of the UpdateL1InfoTree event
@@ -90,15 +94,15 @@ type Event struct {
 
 // L1InfoTreeLeaf representation of a leaf of the L1 Info tree
 type L1InfoTreeLeaf struct {
-	BlockNumber       uint64      `meddler:"block_num"`
-	BlockPosition     uint64      `meddler:"block_pos"`
-	L1InfoTreeIndex   uint32      `meddler:"position"`
-	PreviousBlockHash common.Hash `meddler:"previous_block_hash,hash"`
-	Timestamp         uint64      `meddler:"timestamp"`
-	MainnetExitRoot   common.Hash `meddler:"mainnet_exit_root,hash"`
-	RollupExitRoot    common.Hash `meddler:"rollup_exit_root,hash"`
-	GlobalExitRoot    common.Hash `meddler:"global_exit_root,hash"`
-	Hash              common.Hash `meddler:"hash,hash"`
+	BlockNumber       uint64      `meddler:"block_num" json:"block_num"`
+	BlockPosition     uint64      `meddler:"block_pos" json:"block_pos"`
+	L1InfoTreeIndex   uint32      `meddler:"position" json:"l1_info_tree_index"`
+	PreviousBlockHash common.Hash `meddler:"previous_block_hash,hash" json:"previous_block_hash"`
+	Timestamp         uint64      `meddler:"timestamp" json:"timestamp"`
+	MainnetExitRoot   common.Hash `meddler:"mainnet_exit_root,hash" json:"mainnet_exit_root"`
+	RollupExitRoot    common.Hash `meddler:"rollup_exit_root,hash" json:"rollup_exit_root"`
+	GlobalExitRoot    common.Hash `meddler:"global_exit_root,hash" json:"global_exit_root"`
+	Hash              common.Hash `meddler:"hash,hash" json:"hash"`
 }
 
 func (l *L1InfoTreeLeaf) String() string {
@@ -120,16 +124,16 @@ func (l *L1InfoTreeInitial) String() string {
 }
 
 // Hash as expected by the tree
-func (l *L1InfoTreeLeaf) hash() common.Hash {
+func (l *L1InfoTreeLeaf) GetHash() common.Hash {
 	var res [treeTypes.DefaultHeight]byte
 	t := make([]byte, 8) //nolint:mnd
 	binary.BigEndian.PutUint64(t, l.Timestamp)
-	copy(res[:], keccak256.Hash(l.globalExitRoot().Bytes(), l.PreviousBlockHash.Bytes(), t))
+	copy(res[:], keccak256.Hash(l.GetGlobalExitRoot().Bytes(), l.PreviousBlockHash.Bytes(), t))
 	return res
 }
 
 // GlobalExitRoot returns the GER
-func (l *L1InfoTreeLeaf) globalExitRoot() common.Hash {
+func (l *L1InfoTreeLeaf) GetGlobalExitRoot() common.Hash {
 	var gerBytes [treeTypes.DefaultHeight]byte
 	hasher := sha3.NewLegacyKeccak256()
 	hasher.Write(l.MainnetExitRoot[:])
@@ -144,15 +148,19 @@ func newProcessor(dbPath string) (*processor, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := db.NewSQLiteDB(dbPath)
+	database, err := db.NewSQLiteDB(dbPath)
 	if err != nil {
 		return nil, err
 	}
 	return &processor{
-		db:             db,
-		l1InfoTree:     tree.NewAppendOnlyTree(db, migrations.L1InfoTreePrefix),
-		rollupExitTree: tree.NewUpdatableTree(db, migrations.RollupExitTreePrefix),
+		db:             database,
+		l1InfoTree:     tree.NewAppendOnlyTree(database, migrations.L1InfoTreePrefix),
+		rollupExitTree: tree.NewUpdatableTree(database, migrations.RollupExitTreePrefix),
 		log:            log.WithFields("processor", "l1infotreesync"),
+		CompatibilityDataStorager: compatibility.NewKeyValueToCompatibilityStorage[sync.RuntimeData](
+			db.NewKeyValueStorage(database),
+			aggkitcommon.L1INFOTREESYNC,
+		),
 	}, nil
 }
 
@@ -164,6 +172,7 @@ func (p *processor) GetL1InfoTreeMerkleProof(
 	if err != nil {
 		return treeTypes.Proof{}, treeTypes.Root{}, err
 	}
+
 	proof, err := p.l1InfoTree.GetProof(ctx, root.Index, root.Hash)
 	return proof, root, err
 }
@@ -195,7 +204,8 @@ func (p *processor) GetLatestInfoUntilBlock(ctx context.Context, blockNum uint64
 	info := &L1InfoTreeLeaf{}
 	err = meddler.QueryRow(
 		tx, info,
-		`SELECT * FROM l1info_leaf ORDER BY block_num DESC, block_pos DESC LIMIT 1;`,
+		`SELECT * FROM l1info_leaf WHERE block_num <= $1 ORDER BY block_num DESC, block_pos DESC LIMIT 1;`,
+		blockNum,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -211,7 +221,7 @@ func (p *processor) GetInfoByIndex(ctx context.Context, index uint32) (*L1InfoTr
 	return p.getInfoByIndexWithTx(p.db, index)
 }
 
-func (p *processor) getInfoByIndexWithTx(tx db.DBer, index uint32) (*L1InfoTreeLeaf, error) {
+func (p *processor) getInfoByIndexWithTx(tx dbtypes.DBer, index uint32) (*L1InfoTreeLeaf, error) {
 	info := &L1InfoTreeLeaf{}
 	return info, meddler.QueryRow(
 		tx, info,
@@ -224,14 +234,36 @@ func (p *processor) GetLastProcessedBlock(ctx context.Context) (uint64, error) {
 	return p.getLastProcessedBlockWithTx(p.db)
 }
 
-func (p *processor) getLastProcessedBlockWithTx(tx db.Querier) (uint64, error) {
-	var lastProcessedBlock uint64
+func (p *processor) getLastProcessedBlockWithTx(tx dbtypes.Querier) (uint64, error) {
+	var lastProcessedBlockNum uint64
+
 	row := tx.QueryRow("SELECT num FROM BLOCK ORDER BY num DESC LIMIT 1;")
-	err := row.Scan(&lastProcessedBlock)
+	err := row.Scan(&lastProcessedBlockNum)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
-	return lastProcessedBlock, err
+	return lastProcessedBlockNum, err
+}
+
+// GetProcessedBlockUntil returns the last processed block until the given blockNum
+// Returns the given blockNum if it has been processed, or the last processed block before it
+func (p *processor) GetProcessedBlockUntil(ctx context.Context, blockNum uint64) (uint64, common.Hash, error) {
+	var (
+		processedBlockNum  uint64
+		processedBlockHash *string
+	)
+
+	row := p.db.QueryRow("SELECT num, hash FROM block WHERE num <= $1 ORDER BY num DESC LIMIT 1;", blockNum)
+	if err := row.Scan(&processedBlockNum, &processedBlockHash); err != nil {
+		return 0, common.Hash{}, err
+	}
+
+	hash := common.Hash{}
+	if processedBlockHash != nil {
+		hash = common.HexToHash(*processedBlockHash)
+	}
+
+	return processedBlockNum, hash, nil
 }
 
 // Reorg triggers a purge and reset process on the processor to leaf it on a state
@@ -307,8 +339,10 @@ func (p *processor) ProcessBlock(ctx context.Context, block sync.Block) error {
 		return fmt.Errorf("insert Block. err: %w", err)
 	}
 
-	var initialL1InfoIndex uint32
-	var l1InfoLeavesAdded uint32
+	var (
+		initialL1InfoIndex uint32
+		l1InfoLeavesAdded  uint32
+	)
 	lastIndex, err := p.getLastIndex(tx)
 
 	switch {
@@ -336,8 +370,8 @@ func (p *processor) ProcessBlock(ctx context.Context, block sync.Block) error {
 				MainnetExitRoot:   event.UpdateL1InfoTree.MainnetExitRoot,
 				RollupExitRoot:    event.UpdateL1InfoTree.RollupExitRoot,
 			}
-			info.GlobalExitRoot = info.globalExitRoot()
-			info.Hash = info.hash()
+			info.GlobalExitRoot = info.GetGlobalExitRoot()
+			info.Hash = info.GetHash()
 			if err = meddler.Insert(tx, "l1info_leaf", info); err != nil {
 				return fmt.Errorf("insert l1info_leaf %s. err: %w", info.String(), err)
 			}
@@ -413,7 +447,7 @@ func (p *processor) ProcessBlock(ctx context.Context, block sync.Block) error {
 	return nil
 }
 
-func (p *processor) getLastIndex(tx db.Querier) (uint32, error) {
+func (p *processor) getLastIndex(tx dbtypes.Querier) (uint32, error) {
 	var lastProcessedIndex uint32
 	row := tx.QueryRow("SELECT position FROM l1info_leaf ORDER BY block_num DESC, block_pos DESC LIMIT 1;")
 	err := row.Scan(&lastProcessedIndex)
@@ -475,7 +509,7 @@ func (p *processor) GetInfoByGlobalExitRoot(ger common.Hash) (*L1InfoTreeLeaf, e
 	return info, db.ReturnErrNotFound(err)
 }
 
-func (p *processor) getDBQuerier(tx db.Txer) db.Querier {
+func (p *processor) getDBQuerier(tx dbtypes.Txer) dbtypes.Querier {
 	if tx != nil {
 		return tx
 	}

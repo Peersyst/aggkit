@@ -6,6 +6,7 @@ import (
 
 	"github.com/agglayer/aggkit/agglayer"
 	"github.com/agglayer/aggkit/aggsender/types"
+	aggkitcommon "github.com/agglayer/aggkit/common"
 )
 
 const (
@@ -39,12 +40,13 @@ func (c *ConfigEpochNotifierPerBlock) String() string {
 		c.StartingEpochBlock, c.NumBlockPerEpoch, c.EpochNotificationPercentage)
 }
 
-func NewConfigEpochNotifierPerBlock(aggLayer agglayer.AggLayerClientGetEpochConfiguration,
+func NewConfigEpochNotifierPerBlock(ctx context.Context,
+	agglayerClient agglayer.AggLayerClientGetEpochConfiguration,
 	epochNotificationPercentage uint) (*ConfigEpochNotifierPerBlock, error) {
-	if aggLayer == nil {
-		return nil, fmt.Errorf("newConfigEpochNotifierPerBlock: aggLayerClient is required")
+	if agglayerClient == nil {
+		return nil, fmt.Errorf("newConfigEpochNotifierPerBlock: agglayerClient is required")
 	}
-	clockConfig, err := aggLayer.GetEpochConfiguration()
+	clockConfig, err := agglayerClient.GetEpochConfiguration(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("newConfigEpochNotifierPerBlock: error getting clock configuration from AggLayer: %w", err)
 	}
@@ -57,17 +59,17 @@ func NewConfigEpochNotifierPerBlock(aggLayer agglayer.AggLayerClientGetEpochConf
 
 func (c *ConfigEpochNotifierPerBlock) Validate() error {
 	if c.NumBlockPerEpoch == 0 {
-		return fmt.Errorf("numBlockPerEpoch: num block per epoch is required > 0 ")
+		return fmt.Errorf("num block per epoch should be greater than 0")
 	}
 	if c.EpochNotificationPercentage >= maxPercent {
-		return fmt.Errorf("epochNotificationPercentage: must be between 0 and 99")
+		return fmt.Errorf("epoch notification percentage must be between 0 and 99")
 	}
 	return nil
 }
 
 type EpochNotifierPerBlock struct {
 	blockNotifier types.BlockNotifier
-	logger        types.Logger
+	logger        aggkitcommon.Logger
 
 	lastStartingEpochBlock uint64
 
@@ -76,7 +78,7 @@ type EpochNotifierPerBlock struct {
 }
 
 func NewEpochNotifierPerBlock(blockNotifier types.BlockNotifier,
-	logger types.Logger,
+	logger aggkitcommon.Logger,
 	config ConfigEpochNotifierPerBlock,
 	subscriber types.GenericSubscriber[types.EpochEvent]) (*EpochNotifierPerBlock, error) {
 	if subscriber == nil {
@@ -167,7 +169,7 @@ func (e *EpochNotifierPerBlock) step(status internalStatus,
 	if needNotify {
 		logFunc = e.logger.Infof
 	}
-	logFunc("New block seen [finality:%s]: %d. blockRate:%s Epoch:%d Percent:%f%% notify:%v config:%s",
+	logFunc("New block seen [finality:%s]: %d. blockRate:%s Epoch:%d Percent:%.2f%% notify:%v config:%s",
 		newBlock.BlockFinalityType, newBlock.BlockNumber, newBlock.BlockRate, closingEpoch,
 		percentEpoch*maxPercent, needNotify, e.Config.String())
 	if needNotify {
