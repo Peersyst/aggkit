@@ -7,7 +7,6 @@ import (
 
 	agglayertypes "github.com/agglayer/aggkit/agglayer/types"
 	"github.com/agglayer/aggkit/aggsender/db"
-	"github.com/agglayer/aggkit/aggsender/l1infotreequery"
 	"github.com/agglayer/aggkit/aggsender/types"
 	signertypes "github.com/agglayer/go_signer/signer/types"
 	"github.com/ethereum/go-ethereum/common"
@@ -15,40 +14,53 @@ import (
 
 // PPFlow is a struct that holds the logic for the regular pessimistic proof flow
 type PPFlow struct {
-	*baseFlow
+	baseFlow              types.AggsenderFlowBaser
+	signer                signertypes.Signer
+	log                   types.Logger
+	l1InfoTreeDataQuerier types.L1InfoTreeDataQuerier
 
-	signer signertypes.Signer
+	forceOneBridgeExit bool
+	maxL2BlockLimiter  types.MaxL2BlockNumberLimiterInterface
 }
 
 // NewPPFlow returns a new instance of the PPFlow
 func NewPPFlow(log types.Logger,
-	maxCertSize uint,
-	bridgeMetaDataAsHash bool,
+	baseFlow types.AggsenderFlowBaser,
 	storage db.AggSenderStorage,
-	l1InfoTreeSyncer types.L1InfoTreeSyncer,
-	l2Syncer types.L2BridgeSyncer,
-	l1Client types.EthClient,
-	signer signertypes.Signer) *PPFlow {
+	l1InfoTreeQuerier types.L1InfoTreeDataQuerier,
+	l2BridgeQuerier types.BridgeQuerier,
+	signer signertypes.Signer,
+	forceOneBridgeExit bool,
+	maxL2BlockNumber uint64) *PPFlow {
+	feature := NewMaxL2BlockNumberLimiter(
+		maxL2BlockNumber,
+		log,
+		true,
+		forceOneBridgeExit,
+	)
 	return &PPFlow{
-		signer: signer,
-		baseFlow: &baseFlow{
-			log:                   log,
-			l2Syncer:              l2Syncer,
-			storage:               storage,
-			l1InfoTreeDataQuerier: l1infotreequery.NewL1InfoTreeDataQuerier(l1Client, l1InfoTreeSyncer),
-			maxCertSize:           maxCertSize,
-			bridgeMetaDataAsHash:  bridgeMetaDataAsHash,
-		},
+		signer:                signer,
+		log:                   log,
+		l1InfoTreeDataQuerier: l1InfoTreeQuerier,
+		baseFlow:              baseFlow,
+		forceOneBridgeExit:    forceOneBridgeExit,
+		maxL2BlockLimiter:     feature,
 	}
+}
+
+// CheckInitialStatus checks that initial status is correct.
+// For PPFlow  there are no special checks to do, so it just returns nil
+func (p *PPFlow) CheckInitialStatus(ctx context.Context) error {
+	return nil
 }
 
 // GetCertificateBuildParams returns the parameters to build a certificate
 // this function is the implementation of the FlowManager interface
 func (p *PPFlow) GetCertificateBuildParams(ctx context.Context) (*types.CertificateBuildParams, error) {
-	buildParams, err := p.getCertificateBuildParamsInternal(ctx, false)
+	buildParams, err := p.baseFlow.GetCertificateBuildParamsInternal(ctx, types.CertificateTypePP)
 	if err != nil {
 		if errors.Is(err, errNoNewBlocks) {
-			// no new blocks to send a certificate
+			// no new blocks to send a certificate,
 			// this is a valid case, so just return nil without error
 			return nil, nil
 		}
@@ -56,12 +68,28 @@ func (p *PPFlow) GetCertificateBuildParams(ctx context.Context) (*types.Certific
 		return nil, err
 	}
 
-	if buildParams == nil {
-		// no new blocks to send a certificate or no bridges
+	if p.forceOneBridgeExit && buildParams.NumberOfBridges() == 0 {
+		// if forceOneBridgeExit is true, we need to ensure that there is at least one bridge exit
+		p.log.Infof("PPFlow - forceOneBridgeExit is true, but no bridges found, "+
+			"so no certificate will be built for range: %d - %d",
+			buildParams.FromBlock, buildParams.ToBlock)
 		return nil, nil
 	}
 
-	if err := p.verifyBuildParams(buildParams); err != nil {
+	if buildParams.IsEmpty() {
+		p.log.Infof("PPFlow - no bridges or claims found for range: %d - %d, so no certificate will be built",
+			buildParams.FromBlock, buildParams.ToBlock)
+		return nil, nil
+	}
+	if p.maxL2BlockLimiter != nil {
+		// If the feature is enabled, we need to adapt the build params
+		buildParams, err = p.maxL2BlockLimiter.AdaptCertificate(buildParams)
+		if err != nil {
+			return nil, fmt.Errorf("ppFlow - error adapting  certificate to MaxL2Block. Err: %w", err)
+		}
+	}
+
+	if err := p.baseFlow.VerifyBuildParams(ctx, buildParams); err != nil {
 		return nil, fmt.Errorf("ppFlow - error verifying build params: %w", err)
 	}
 
@@ -80,7 +108,7 @@ func (p *PPFlow) GetCertificateBuildParams(ctx context.Context) (*types.Certific
 // this function is the implementation of the FlowManager interface
 func (p *PPFlow) BuildCertificate(ctx context.Context,
 	buildParams *types.CertificateBuildParams) (*agglayertypes.Certificate, error) {
-	certificate, err := p.buildCertificate(ctx, buildParams, buildParams.LastSentCertificate, false)
+	certificate, err := p.baseFlow.BuildCertificate(ctx, buildParams, buildParams.LastSentCertificate, false)
 	if err != nil {
 		return nil, fmt.Errorf("ppFlow - error building certificate: %w", err)
 	}
@@ -96,7 +124,7 @@ func (p *PPFlow) BuildCertificate(ctx context.Context,
 // signCertificate signs a certificate with the aggsender key
 func (p *PPFlow) signCertificate(ctx context.Context,
 	certificate *agglayertypes.Certificate) (*agglayertypes.Certificate, error) {
-	hashToSign := certificate.HashToSign()
+	hashToSign := certificate.PPHashToSign()
 	sig, err := p.signer.SignHash(ctx, hashToSign)
 	if err != nil {
 		return nil, err

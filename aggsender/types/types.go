@@ -1,19 +1,11 @@
 package types
 
 import (
-	"context"
-	"encoding/binary"
+	"database/sql/driver"
 	"fmt"
 	"time"
 
 	agglayertypes "github.com/agglayer/aggkit/agglayer/types"
-	"github.com/agglayer/aggkit/aggoracle/chaingerreader"
-	"github.com/agglayer/aggkit/bridgesync"
-	"github.com/agglayer/aggkit/etherman"
-	"github.com/agglayer/aggkit/l1infotreesync"
-	treetypes "github.com/agglayer/aggkit/tree/types"
-	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -26,99 +18,102 @@ const (
 	AggchainProofMode    AggsenderMode = "AggchainProof"
 )
 
-// AggsenderFlow is an interface that defines the methods to manage the flow of the AggSender
-// based on the different prover types
-type AggsenderFlow interface {
-	// GetCertificateBuildParams returns the parameters to build a certificate
-	GetCertificateBuildParams(ctx context.Context) (*CertificateBuildParams, error)
-	// BuildCertificate builds a certificate based on the buildParams
-	BuildCertificate(ctx context.Context,
-		buildParams *CertificateBuildParams) (*agglayertypes.Certificate, error)
+type CertificateType uint8
+
+const (
+	CertificateTypeUnknownStr    string = ""
+	CertificateTypePPStr         string = "pp"
+	CertificateTypeFEPStr        string = "fep"
+	CertificateTypeOptimisticStr string = "optimistic"
+
+	CertificateTypeUnknown    CertificateType = 0
+	CertificateTypePP         CertificateType = 1
+	CertificateTypeFEP        CertificateType = 2
+	CertificateTypeOptimistic CertificateType = 3
+)
+
+func (c CertificateType) String() string {
+	switch c {
+	case CertificateTypeFEP:
+		return CertificateTypeFEPStr
+	case CertificateTypePP:
+		return CertificateTypePPStr
+	case CertificateTypeOptimistic:
+		return CertificateTypeOptimisticStr
+	default:
+		return CertificateTypeUnknownStr
+	}
 }
 
-// L1InfoTreeSyncer is an interface defining functions that an L1InfoTreeSyncer should implement
-type L1InfoTreeSyncer interface {
-	GetInfoByGlobalExitRoot(globalExitRoot common.Hash) (*l1infotreesync.L1InfoTreeLeaf, error)
-	GetL1InfoTreeMerkleProofFromIndexToRoot(
-		ctx context.Context, index uint32, root common.Hash,
-	) (treetypes.Proof, error)
-	GetL1InfoTreeRootByIndex(ctx context.Context, index uint32) (treetypes.Root, error)
-	GetProcessedBlockUntil(ctx context.Context, blockNumber uint64) (uint64, common.Hash, error)
-	GetInfoByIndex(ctx context.Context, index uint32) (*l1infotreesync.L1InfoTreeLeaf, error)
-	GetLatestInfoUntilBlock(ctx context.Context, blockNum uint64) (*l1infotreesync.L1InfoTreeLeaf, error)
+// meddler support for store as string
+func (c CertificateType) Value() (driver.Value, error) {
+	return c.String(), nil
 }
 
-// L2BridgeSyncer is an interface defining functions that an L2BridgeSyncer should implement
-type L2BridgeSyncer interface {
-	GetBlockByLER(ctx context.Context, ler common.Hash) (uint64, error)
-	GetExitRootByIndex(ctx context.Context, index uint32) (treetypes.Root, error)
-	GetBridges(ctx context.Context, fromBlock, toBlock uint64) ([]bridgesync.Bridge, error)
-	GetClaims(ctx context.Context, fromBlock, toBlock uint64) ([]bridgesync.Claim, error)
-	OriginNetwork() uint32
-	BlockFinality() etherman.BlockNumberFinality
-	GetLastProcessedBlock(ctx context.Context) (uint64, error)
+// meddler support for store as string
+func (c *CertificateType) Scan(value interface{}) error {
+	str, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("CertificateType: expected string, got %T", value)
+	}
+	v, err := NewCertificateTypeFromStr(str)
+	if err != nil {
+		return fmt.Errorf("CertificateType.Scan(...): %w", err)
+	}
+	*c = v
+	return nil
 }
 
-// ChainGERReader is an interface defining functions that an ChainGERReader should implement
-type ChainGERReader interface {
-	GetInjectedGERsForRange(
-		ctx context.Context,
-		fromBlock, toBlock uint64) (map[common.Hash]chaingerreader.InjectedGER, error)
+func (c CertificateType) ToInt() uint8 {
+	return uint8(c)
 }
 
-// L1InfoTreeDataQuerier is an interface defining functions that an L1InfoTreeDataQuerier should implement
-// It is used to query data from the L1 Info tree
-type L1InfoTreeDataQuerier interface {
-	// GetLatestFinalizedL1InfoRoot returns the latest processed l1 info tree root
-	// based on the latest finalized l1 block
-	GetLatestFinalizedL1InfoRoot(ctx context.Context) (*treetypes.Root, *l1infotreesync.L1InfoTreeLeaf, error)
-
-	// GetFinalizedL1InfoTreeData returns the L1 Info tree data for the last finalized processed block
-	// l1InfoTreeData is:
-	// - merkle proof of given l1 info tree leaf
-	// - the leaf data of the highest index leaf on that block and root
-	// - the root of the l1 info tree on that block
-	GetFinalizedL1InfoTreeData(ctx context.Context,
-	) (treetypes.Proof, *l1infotreesync.L1InfoTreeLeaf, *treetypes.Root, error)
-
-	// GetProofForGER returns the L1 Info tree leaf and the merkle proof for the given GER
-	GetProofForGER(ctx context.Context, ger, rootFromWhichToProve common.Hash) (
-		*l1infotreesync.L1InfoTreeLeaf, treetypes.Proof, error)
-
-	// CheckIfClaimsArePartOfFinalizedL1InfoTree checks if the claims are part of the finalized L1 Info tree
-	CheckIfClaimsArePartOfFinalizedL1InfoTree(
-		finalizedL1InfoTreeRoot *treetypes.Root, claims []bridgesync.Claim) error
+func NewCertificateTypeFromInt(v uint8) CertificateType {
+	return CertificateType(v)
 }
 
-// EthClient is an interface defining functions that an EthClient should implement
-type EthClient interface {
-	bind.ContractBackend
-	ethereum.LogFilterer
-	ethereum.BlockNumberReader
-	ethereum.ChainReader
+func NewCertificateTypeFromStr(v string) (CertificateType, error) {
+	switch v {
+	case CertificateTypePPStr:
+		return CertificateTypePP, nil
+	case CertificateTypeFEPStr:
+		return CertificateTypeFEP, nil
+	case CertificateTypeOptimisticStr:
+		return CertificateTypeOptimistic, nil
+	case CertificateTypeUnknownStr:
+		return CertificateTypeUnknown, nil
+	default:
+		return CertificateTypeUnknown, fmt.Errorf("unknown CertificateType: %s", v)
+	}
 }
 
-// Logger is an interface that defines the methods to log messages
-type Logger interface {
-	Fatalf(format string, args ...interface{})
-	Info(args ...interface{})
-	Infof(format string, args ...interface{})
-	Error(args ...interface{})
-	Errorf(format string, args ...interface{})
-	Warn(args ...interface{})
-	Warnf(format string, args ...interface{})
-	Debug(args ...interface{})
-	Debugf(format string, args ...interface{})
+type CertificateSource string
+
+const (
+	CertificateSourceAggLayer CertificateSource = "agglayer"
+	CertificateSourceLocal    CertificateSource = "local"
+	CertificateSourceUnknown  CertificateSource = ""
+)
+
+func (c CertificateSource) String() string {
+	return string(c)
+}
+
+// CertStatus holds the status of pending and in error certificates
+type CertStatus struct {
+	ExistPendingCerts   bool
+	ExistNewInErrorCert bool
 }
 
 type AggchainProof struct {
-	LastProvenBlock uint64            `json:"last_proven_block"`
-	EndBlock        uint64            `json:"end_block"`
-	CustomChainData []byte            `json:"custom_chain_data,omitempty"`
-	LocalExitRoot   common.Hash       `json:"local_exit_root"`
-	AggchainParams  common.Hash       `json:"aggchain_params"`
-	Context         map[string][]byte `json:"context,omitempty"`
-	SP1StarkProof   *SP1StarkProof    `json:"sp1_stark_proof,omitempty"`
+	LastProvenBlock uint64
+	EndBlock        uint64
+	CustomChainData []byte
+	LocalExitRoot   common.Hash
+	AggchainParams  common.Hash
+	Context         map[string][]byte
+	SP1StarkProof   *SP1StarkProof
+	Signature       []byte
 }
 
 func (a *AggchainProof) String() string {
@@ -132,7 +127,8 @@ func (a *AggchainProof) String() string {
 		"LocalExitRoot: %s \n"+
 		"AggchainParams: %s \n"+
 		"Context: %v \n"+
-		"SP1StarkProof: %v \n",
+		"SP1StarkProof: %v \n"+
+		"Signature: %s",
 		a.LastProvenBlock,
 		a.EndBlock,
 		a.CustomChainData,
@@ -140,16 +136,17 @@ func (a *AggchainProof) String() string {
 		a.AggchainParams.String(),
 		a.Context,
 		a.SP1StarkProof.String(),
+		common.Bytes2Hex(a.Signature),
 	)
 }
 
 type SP1StarkProof struct {
 	// SP1 Version
-	Version string `json:"version,omitempty"`
+	Version string
 	// SP1 stark proof.
-	Proof []byte `json:"proof,omitempty"`
+	Proof []byte
 	// SP1 stark proof verification key.
-	Vkey []byte `json:"vkey,omitempty"`
+	Vkey []byte
 }
 
 func (s *SP1StarkProof) String() string {
@@ -166,11 +163,10 @@ func (s *SP1StarkProof) String() string {
 	)
 }
 
-type CertificateInfo struct {
-	Height        uint64      `meddler:"height"`
-	RetryCount    int         `meddler:"retry_count"`
-	CertificateID common.Hash `meddler:"certificate_id,hash"`
-	// PreviousLocalExitRoot if it's nil means no reported
+type CertificateHeader struct {
+	Height                  uint64                          `meddler:"height"`
+	RetryCount              int                             `meddler:"retry_count"`
+	CertificateID           common.Hash                     `meddler:"certificate_id,hash"`
 	PreviousLocalExitRoot   *common.Hash                    `meddler:"previous_local_exit_root,hash"`
 	NewLocalExitRoot        common.Hash                     `meddler:"new_local_exit_root,hash"`
 	FromBlock               uint64                          `meddler:"from_block"`
@@ -178,13 +174,16 @@ type CertificateInfo struct {
 	Status                  agglayertypes.CertificateStatus `meddler:"status"`
 	CreatedAt               uint32                          `meddler:"created_at"`
 	UpdatedAt               uint32                          `meddler:"updated_at"`
-	SignedCertificate       string                          `meddler:"signed_certificate"`
-	AggchainProof           *AggchainProof                  `meddler:"aggchain_proof,aggchainproof"`
 	FinalizedL1InfoTreeRoot *common.Hash                    `meddler:"finalized_l1_info_tree_root,hash"`
 	L1InfoTreeLeafCount     uint32                          `meddler:"l1_info_tree_leaf_count"`
+	// CertType must be private but there are a lot of code that create CertificateInfo directly
+	// so I add a GetCertType() that is not idiomatic but helps to determine the kind of certificate
+	CertType CertificateType `meddler:"cert_type"`
+	// This is the origin of this data, it can be from the AggLayer or from the local sender
+	CertSource CertificateSource `meddler:"cert_source"`
 }
 
-func (c *CertificateInfo) String() string {
+func (c *CertificateHeader) String() string {
 	if c == nil {
 		return NilStr
 	}
@@ -196,12 +195,9 @@ func (c *CertificateInfo) String() string {
 	if c.FinalizedL1InfoTreeRoot != nil {
 		finalizedL1InfoTreeRoot = c.FinalizedL1InfoTreeRoot.String()
 	}
-	aggchainProof := NilStr
-	if c.AggchainProof != nil {
-		aggchainProof = c.AggchainProof.String()
-	}
 
-	return fmt.Sprintf("aggsender.CertificateInfo: \n"+
+	return fmt.Sprintf("aggsender.CertificateHeader: \n"+
+		"Type: %s \n"+
 		"Height: %d \n"+
 		"RetryCount: %d \n"+
 		"CertificateID: %s \n"+
@@ -212,8 +208,9 @@ func (c *CertificateInfo) String() string {
 		"ToBlock: %d \n"+
 		"CreatedAt: %s \n"+
 		"UpdatedAt: %s \n"+
-		"AggchainProof: %s \n"+
-		"FinalizedL1InfoTreeRoot: %s \n",
+		"FinalizedL1InfoTreeRoot: %s \n"+
+		"Source: %s \n",
+		c.CertType.String(),
 		c.Height,
 		c.RetryCount,
 		c.CertificateID.String(),
@@ -224,21 +221,22 @@ func (c *CertificateInfo) String() string {
 		c.ToBlock,
 		time.Unix(int64(c.CreatedAt), 0),
 		time.Unix(int64(c.UpdatedAt), 0),
-		aggchainProof,
 		finalizedL1InfoTreeRoot,
+		c.CertSource.String(),
 	)
 }
 
 // ID returns a string with the unique identifier of the cerificate (height+certificateID)
-func (c *CertificateInfo) ID() string {
+func (c *CertificateHeader) ID() string {
 	if c == nil {
 		return NilStr
 	}
-	return fmt.Sprintf("%d/%s (retry %d)", c.Height, c.CertificateID.String(), c.RetryCount)
+	return fmt.Sprintf("%d/%s (retry: %d, type: %s)",
+		c.Height, c.CertificateID.String(), c.RetryCount, c.CertType.String())
 }
 
 // StatusString returns the string representation of the status
-func (c *CertificateInfo) StatusString() string {
+func (c *CertificateHeader) StatusString() string {
 	if c == nil {
 		return "???"
 	}
@@ -246,7 +244,7 @@ func (c *CertificateInfo) StatusString() string {
 }
 
 // IsClosed returns true if the certificate is closed (settled or inError)
-func (c *CertificateInfo) IsClosed() bool {
+func (c *CertificateHeader) IsClosed() bool {
 	if c == nil {
 		return false
 	}
@@ -254,76 +252,57 @@ func (c *CertificateInfo) IsClosed() bool {
 }
 
 // ElapsedTimeSinceCreation returns the time elapsed since the certificate was created
-func (c *CertificateInfo) ElapsedTimeSinceCreation() time.Duration {
+func (c *CertificateHeader) ElapsedTimeSinceCreation() time.Duration {
 	if c == nil {
 		return 0
 	}
 	return time.Now().UTC().Sub(time.Unix(int64(c.CreatedAt), 0))
 }
 
-type CertificateMetadata struct {
-	// ToBlock contains the pre v1 value stored in the metadata certificate field
-	// is not stored in the hash post v1
-	ToBlock uint64
-
-	// FromBlock is the block number from which the certificate contains data
-	FromBlock uint64
-
-	// Offset is the number of blocks from the FromBlock that the certificate contains
-	Offset uint32
-
-	// CreatedAt is the timestamp when the certificate was created
-	CreatedAt uint32
-
-	// Version is the version of the metadata
-	Version uint8
+type Certificate struct {
+	Header            *CertificateHeader
+	SignedCertificate *string        `meddler:"signed_certificate"`
+	AggchainProof     *AggchainProof `meddler:"aggchain_proof,aggchainproof"`
+	// ExtraData is a no structured data used to debug or extra info for this certificate
+	ExtraData string `meddler:"extra_data"`
 }
 
-// NewCertificateMetadataFromHash returns a new CertificateMetadata from the given hash
-func NewCertificateMetadata(fromBlock uint64, offset uint32, createdAt uint32) *CertificateMetadata {
-	return &CertificateMetadata{
-		FromBlock: fromBlock,
-		Offset:    offset,
-		CreatedAt: createdAt,
-		Version:   1,
+func (c *Certificate) DetermineCertType(startL2Block uint64) CertificateType {
+	if c == nil {
+		return CertificateTypeUnknown
 	}
-}
-
-// NewCertificateMetadataFromHash returns a new CertificateMetadata from the given hash
-func NewCertificateMetadataFromHash(hash common.Hash) *CertificateMetadata {
-	b := hash.Bytes()
-
-	if b[0] < 1 {
-		return &CertificateMetadata{
-			ToBlock: hash.Big().Uint64(),
+	if c.Header.CertType == CertificateTypeUnknown {
+		if c.AggchainProof != nil {
+			return CertificateTypeFEP
 		}
+		// If the certificate is not set, we can determine the type based on the FromBlock
+		if startL2Block == 0 {
+			return CertificateTypeUnknown
+		}
+		// If fromBlock it's before startL2Block it's a valid determination that it is a PP
+		if c.Header.FromBlock < startL2Block {
+			return CertificateTypePP
+		}
+		// If not then we assume it's a FEP
+		return CertificateTypeFEP
 	}
-
-	return &CertificateMetadata{
-		Version:   b[0],
-		FromBlock: binary.BigEndian.Uint64(b[1:9]),
-		Offset:    binary.BigEndian.Uint32(b[9:13]),
-		CreatedAt: binary.BigEndian.Uint32(b[13:17]),
-	}
+	return c.Header.CertType
 }
 
-// ToHash returns the hash of the metadata
-func (c *CertificateMetadata) ToHash() common.Hash {
-	b := make([]byte, common.HashLength) // 32-byte hash
+func (c *Certificate) String() string {
+	if c == nil {
+		return NilStr
+	}
 
-	// Encode version
-	b[0] = c.Version
+	aggchainProof := NilStr
+	if c.AggchainProof != nil {
+		aggchainProof = c.AggchainProof.String()
+	}
 
-	// Encode fromBlock
-	binary.BigEndian.PutUint64(b[1:9], c.FromBlock)
-
-	// Encode offset
-	binary.BigEndian.PutUint32(b[9:13], c.Offset)
-
-	// Encode createdAt
-	binary.BigEndian.PutUint32(b[13:17], c.CreatedAt)
-
-	// Last 8 bytes remain as zero padding
-
-	return common.BytesToHash(b)
+	return fmt.Sprintf("aggsender.Certificate: \n"+
+		"Header: %s \n"+
+		"AggchainProof: %s \n",
+		c.Header.String(),
+		aggchainProof,
+	)
 }

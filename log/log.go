@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	zkevm "github.com/agglayer/aggkit"
+	"github.com/agglayer/aggkit"
 	"github.com/hermeznetwork/tracerr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -86,7 +86,7 @@ func NewLogger(cfg Config) (*zap.SugaredLogger, *zap.AtomicLevel, error) {
 	zapCfg.Level = level
 	zapCfg.OutputPaths = cfg.Outputs
 	zapCfg.InitialFields = map[string]interface{}{
-		"version": zkevm.Version,
+		"version": aggkit.Version,
 		"pid":     os.Getpid(),
 	}
 
@@ -196,6 +196,11 @@ func (l *Logger) Warnf(template string, args ...interface{}) {
 // Fatalf calls log.Fatalf
 func (l *Logger) Fatalf(template string, args ...interface{}) {
 	l.x.Fatalf(template, args...)
+}
+
+// Panicf calls log.Panicf
+func (l *Logger) Panicf(template string, args ...interface{}) {
+	l.x.Panicf(template, args...)
 }
 
 // Errorf calls log.Errorf and stores the error message into the ErrorFile

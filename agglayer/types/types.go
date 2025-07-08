@@ -28,11 +28,18 @@ const (
 	nilStr  = "nil"
 	nullStr = "null"
 	base10  = 10
+
+	EstimatedAggchainProofSize      = 10 * aggkitcommon.KB
+	EstimatedAggchainSignatureSize  = 0.07 * aggkitcommon.KB
+	EstimatedBridgeExitSize         = 0.09 * aggkitcommon.KB
+	EstimatedImportedBridgeExitSize = 2.8 * aggkitcommon.KB
 )
 
 var (
 	NonSettledStatuses = []CertificateStatus{Pending, Candidate, Proven}
 	ClosedStatuses     = []CertificateStatus{Settled, InError}
+
+	emptyBytesHash = crypto.Keccak256(nil)
 )
 
 // String representation of the enum
@@ -147,10 +154,10 @@ func (a *AggchainDataSelector) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	var ok bool
-	if _, ok = obj["signature"]; ok {
-		a.obj = &AggchainDataSignature{}
-	} else if _, ok = obj["proof"]; ok {
+	if _, ok = obj["proof"]; ok {
 		a.obj = &AggchainDataProof{}
+	} else if _, ok = obj["signature"]; ok {
+		a.obj = &AggchainDataSignature{}
 	} else {
 		return errors.New("invalid aggchain_data type")
 	}
@@ -194,6 +201,7 @@ type AggchainDataProof struct {
 	Vkey           []byte            `json:"vkey"`
 	AggchainParams common.Hash       `json:"aggchain_params"`
 	Context        map[string][]byte `json:"context"`
+	Signature      []byte            `json:"signature"`
 }
 
 // MarshalJSON is the implementation of the json.Marshaler interface
@@ -204,12 +212,14 @@ func (a *AggchainDataProof) MarshalJSON() ([]byte, error) {
 		Context        map[string][]byte `json:"context"`
 		Version        string            `json:"version"`
 		VKey           string            `json:"vkey"`
+		Signature      string            `json:"signature"`
 	}{
 		Proof:          common.Bytes2Hex(a.Proof),
 		AggchainParams: a.AggchainParams.String(),
 		Context:        a.Context,
 		Version:        a.Version,
 		VKey:           common.Bytes2Hex(a.Vkey),
+		Signature:      common.Bytes2Hex(a.Signature),
 	})
 }
 
@@ -221,6 +231,7 @@ func (a *AggchainDataProof) UnmarshalJSON(data []byte) error {
 		Context        map[string][]byte `json:"context"`
 		Version        string            `json:"version"`
 		VKey           string            `json:"vkey"`
+		Signature      string            `json:"signature"`
 	}{}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
@@ -231,6 +242,7 @@ func (a *AggchainDataProof) UnmarshalJSON(data []byte) error {
 	a.Context = aux.Context
 	a.Version = aux.Version
 	a.Vkey = common.Hex2Bytes(aux.VKey)
+	a.Signature = common.Hex2Bytes(aux.Signature)
 
 	return nil
 }
@@ -245,7 +257,7 @@ type Certificate struct {
 	ImportedBridgeExits []*ImportedBridgeExit `json:"imported_bridge_exits"`
 	Metadata            common.Hash           `json:"metadata"`
 	CustomChainData     []byte                `json:"custom_chain_data,omitempty"`
-	AggchainData        AggchainData          `json:"data,omitempty"`
+	AggchainData        AggchainData          `json:"aggchain_data,omitempty"`
 	L1InfoTreeLeafCount uint32                `json:"l1_info_tree_leaf_count,omitempty"`
 }
 
@@ -260,7 +272,7 @@ func (c *Certificate) UnmarshalJSON(data []byte) error {
 		ImportedBridgeExits []*ImportedBridgeExit `json:"imported_bridge_exits"`
 		Metadata            common.Hash           `json:"metadata"`
 		CustomChainData     []byte                `json:"custom_chain_data,omitempty"`
-		AggchainData        AggchainDataSelector  `json:"data,omitempty"`
+		AggchainData        AggchainDataSelector  `json:"aggchain_data,omitempty"`
 		L1InfoTreeLeafCount uint32                `json:"l1_info_tree_leaf_count,omitempty"`
 	}{}
 	if err := json.Unmarshal(data, &aux); err != nil {
@@ -318,7 +330,7 @@ func (c *Certificate) Hash() common.Hash {
 
 	return crypto.Keccak256Hash(
 		aggkitcommon.Uint32ToBytes(c.NetworkID),
-		aggkitcommon.Uint64ToBytes(c.Height),
+		aggkitcommon.Uint64ToBigEndianBytes(c.Height),
 		c.PrevLocalExitRoot.Bytes(),
 		c.NewLocalExitRoot.Bytes(),
 		bridgeExitsPart,
@@ -326,9 +338,9 @@ func (c *Certificate) Hash() common.Hash {
 	)
 }
 
-// HashToSign is the actual hash that needs to be signed by the aggsender
-// as expected by the agglayer
-func (c *Certificate) HashToSign() common.Hash {
+// PPHashToSign is the actual hash that needs to be signed by the aggsender
+// as expected by the agglayer for the PP flow
+func (c *Certificate) PPHashToSign() common.Hash {
 	globalIndexHashes := make([][]byte, len(c.ImportedBridgeExits))
 	for i, importedBridgeExit := range c.ImportedBridgeExits {
 		globalIndexHashes[i] = importedBridgeExit.GlobalIndex.Hash().Bytes()
@@ -337,6 +349,36 @@ func (c *Certificate) HashToSign() common.Hash {
 	return crypto.Keccak256Hash(
 		c.NewLocalExitRoot.Bytes(),
 		crypto.Keccak256Hash(globalIndexHashes...).Bytes(),
+	)
+}
+
+// FEPHashToSign is the actual hash that needs to be signed by the aggsender
+// as expected by the agglayer for the FEP flow
+func (c *Certificate) FEPHashToSign() common.Hash {
+	chunks := make([][]byte, 0, len(c.ImportedBridgeExits))
+	for _, importedBridgeExit := range c.ImportedBridgeExits {
+		indexBytes := importedBridgeExit.GlobalIndexToLittleEndianBytes()
+		hashBytes := importedBridgeExit.BridgeExit.Hash().Bytes()
+
+		combined := make([]byte, 0, len(indexBytes)+len(hashBytes))
+		combined = append(combined, indexBytes...) // combine into one slice
+		combined = append(combined, hashBytes...)  // combine into one slice
+		chunks = append(chunks, combined)
+	}
+
+	importedBridgeExitsHash := crypto.Keccak256(chunks...)
+
+	aggchainParams := emptyBytesHash
+	aggchainDataProof, ok := c.AggchainData.(*AggchainDataProof)
+	if ok {
+		aggchainParams = aggchainDataProof.AggchainParams.Bytes()
+	}
+
+	return crypto.Keccak256Hash(
+		c.NewLocalExitRoot.Bytes(),
+		importedBridgeExitsHash,
+		aggkitcommon.Uint64ToLittleEndianBytes(c.Height),
+		aggchainParams,
 	)
 }
 
@@ -446,7 +488,6 @@ type BridgeExit struct {
 	DestinationNetwork uint32         `json:"dest_network"`
 	DestinationAddress common.Address `json:"dest_address"`
 	Amount             *big.Int       `json:"amount"`
-	IsMetadataHashed   bool           `json:"-"`
 	Metadata           []byte         `json:"metadata"`
 }
 
@@ -469,11 +510,10 @@ func (b *BridgeExit) Hash() common.Hash {
 	if b.Amount == nil {
 		b.Amount = big.NewInt(0)
 	}
-	var metaDataHash []byte
-	if b.IsMetadataHashed {
-		metaDataHash = b.Metadata
-	} else {
-		metaDataHash = crypto.Keccak256(b.Metadata)
+
+	metaDataHash := b.Metadata
+	if len(metaDataHash) == 0 {
+		metaDataHash = emptyBytesHash
 	}
 
 	return crypto.Keccak256Hash(
@@ -490,10 +530,9 @@ func (b *BridgeExit) Hash() common.Hash {
 // MarshalJSON is the implementation of the json.Marshaler interface
 func (b *BridgeExit) MarshalJSON() ([]byte, error) {
 	var metadataString interface{}
-	if b.IsMetadataHashed {
+
+	if len(b.Metadata) > 0 {
 		metadataString = common.Bytes2Hex(b.Metadata)
-	} else if len(b.Metadata) > 0 {
-		metadataString = bytesToUints(b.Metadata)
 	} else {
 		metadataString = nil
 	}
@@ -539,32 +578,13 @@ func (b *BridgeExit) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("failed to convert amount to big.Int: %s", aux.Amount)
 		}
 	}
+
 	if s, ok := aux.Metadata.(string); ok {
-		b.IsMetadataHashed = true
 		b.Metadata = common.Hex2Bytes(s)
-	} else if uints, ok := aux.Metadata.([]interface{}); ok {
-		b.IsMetadataHashed = false
-		b.Metadata = make([]byte, len(uints))
-		for k, v := range uints {
-			value, ok := v.(float64)
-			if !ok {
-				return fmt.Errorf("failed to convert metadata to byte: %v", v)
-			}
-			b.Metadata[k] = byte(value)
-		}
 	} else {
 		b.Metadata = nil
 	}
 	return nil
-}
-
-// bytesToUints converts a byte slice to a slice of uints
-func bytesToUints(data []byte) []uint {
-	uints := make([]uint, len(data))
-	for i, b := range data {
-		uints[i] = uint(b)
-	}
-	return uints
 }
 
 // MerkleProof represents an inclusion proof of a leaf in a Merkle tree
@@ -630,7 +650,7 @@ func (l *L1InfoTreeLeafInner) Hash() common.Hash {
 	return crypto.Keccak256Hash(
 		l.GlobalExitRoot.Bytes(),
 		l.BlockHash.Bytes(),
-		aggkitcommon.Uint64ToBytes(l.Timestamp),
+		aggkitcommon.Uint64ToBigEndianBytes(l.Timestamp),
 	)
 }
 
@@ -675,6 +695,15 @@ type ProvenInsertedGER struct {
 type ImportedBridgeExitWithBlockNumber struct {
 	BlockNumber        uint64              `json:"block_number"`
 	ImportedBridgeExit *ImportedBridgeExit `json:"imported_bridge_exit"`
+}
+
+// String returns a string representation of the ImportedBridgeExitWithBlockNumber struct
+func (i *ImportedBridgeExitWithBlockNumber) String() string {
+	if i == nil {
+		return "ImportedBridgeExitWithBlockNumber{nil}"
+	}
+	return fmt.Sprintf("BlockNumber: %d, ImportedBridgeExit: %s",
+		i.BlockNumber, i.ImportedBridgeExit.String())
 }
 
 // Claim is the interface that will be implemented by the different types of claims
@@ -863,8 +892,11 @@ func (c *ImportedBridgeExit) String() string {
 	} else {
 		res += fmt.Sprintf(", GlobalIndex: %s", c.GlobalIndex.String())
 	}
-
-	res += fmt.Sprintf("ClaimData: %s", c.ClaimData.String())
+	if c.ClaimData != nil {
+		res += fmt.Sprintf("ClaimData: %s", c.ClaimData.String())
+	} else {
+		res += ", ClaimData: nil"
+	}
 
 	return res
 }
@@ -890,6 +922,17 @@ func (c *ImportedBridgeExit) Hash() common.Hash {
 		c.BridgeExit.Hash().Bytes(),
 		c.ClaimData.Hash().Bytes(),
 		c.GlobalIndex.Hash().Bytes(),
+	)
+}
+
+// GlobalIndexToLittleEndianBytes converts the global index to a byte slice in little-endian format
+func (c *ImportedBridgeExit) GlobalIndexToLittleEndianBytes() []byte {
+	return aggkitcommon.BigIntToLittleEndianBytes(
+		bridgesync.GenerateGlobalIndex(
+			c.GlobalIndex.MainnetFlag,
+			c.GlobalIndex.RollupIndex,
+			c.GlobalIndex.LeafIndex,
+		),
 	)
 }
 

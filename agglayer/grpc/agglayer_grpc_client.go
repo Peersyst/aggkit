@@ -3,7 +3,7 @@ package grpc
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 
 	node "buf.build/gen/go/agglayer/agglayer/grpc/go/agglayer/node/v1/nodev1grpc"
 	v1nodetypes "buf.build/gen/go/agglayer/agglayer/protocolbuffers/go/agglayer/node/types/v1"
@@ -11,7 +11,7 @@ import (
 	v1types "buf.build/gen/go/agglayer/interop/protocolbuffers/go/agglayer/interop/types/v1"
 	"github.com/agglayer/aggkit/agglayer/types"
 	"github.com/agglayer/aggkit/bridgesync"
-	aggkitCommon "github.com/agglayer/aggkit/common"
+	aggkitgrpc "github.com/agglayer/aggkit/grpc"
 	treetypes "github.com/agglayer/aggkit/tree/types"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -22,22 +22,21 @@ var (
 )
 
 type AgglayerGRPCClient struct {
+	cfg                 *aggkitgrpc.ClientConfig
 	networkStateService node.NodeStateServiceClient
 	cfgService          node.ConfigurationServiceClient
 	submissionService   node.CertificateSubmissionServiceClient
 }
 
 // NewAggchainProofClient initializes a new AggchainProof instance
-func NewAgglayerGRPCClient(serverAddr string) (*AgglayerGRPCClient, error) {
-	// trim the http:// prefix if it exists in the URL because the go-grpc client expects it without it
-	addr := strings.TrimPrefix(serverAddr, "http://")
-
-	grpcClient, err := aggkitCommon.NewClient(addr)
+func NewAgglayerGRPCClient(cfg *aggkitgrpc.ClientConfig) (*AgglayerGRPCClient, error) {
+	grpcClient, err := aggkitgrpc.NewClient(cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	return &AgglayerGRPCClient{
+		cfg:                 cfg,
 		networkStateService: node.NewNodeStateServiceClient(grpcClient.Conn()),
 		cfgService:          node.NewConfigurationServiceClient(grpcClient.Conn()),
 		submissionService:   node.NewCertificateSubmissionServiceClient(grpcClient.Conn()),
@@ -46,14 +45,17 @@ func NewAgglayerGRPCClient(serverAddr string) (*AgglayerGRPCClient, error) {
 
 // GetEpochConfiguration returns the epoch configuration from the AggLayer
 func (a *AgglayerGRPCClient) GetEpochConfiguration(ctx context.Context) (*types.ClockConfiguration, error) {
+	ctx, cancel := context.WithTimeout(ctx, a.cfg.RequestTimeout.Duration)
+	defer cancel()
+
 	response, err := a.cfgService.GetEpochConfiguration(ctx, &v1.GetEpochConfigurationRequest{})
 	if err != nil {
-		return nil, aggkitCommon.RepackGRPCErrorWithDetails(err)
+		return nil, fmt.Errorf("failed to get epoch configuration: %w", aggkitgrpc.RepackGRPCErrorWithDetails(err))
 	}
 
 	return &types.ClockConfiguration{
-		EpochDuration: response.EpochConfiguration.EpochDuration,
 		GenesisBlock:  response.EpochConfiguration.GenesisBlock,
+		EpochDuration: response.EpochConfiguration.EpochDuration,
 	}, nil
 }
 
@@ -61,41 +63,9 @@ func (a *AgglayerGRPCClient) GetEpochConfiguration(ctx context.Context) (*types.
 // It returns the certificate ID
 func (a *AgglayerGRPCClient) SendCertificate(ctx context.Context,
 	certificate *types.Certificate) (common.Hash, error) {
-	if certificate.AggchainData == nil {
-		return common.Hash{}, errUndefinedAggchainData
-	}
-
-	var aggchainDataProto *v1types.AggchainData
-
-	switch ad := certificate.AggchainData.(type) {
-	case *types.AggchainDataProof:
-		aggchainDataProto = &v1types.AggchainData{
-			Data: &v1types.AggchainData_Generic{
-				Generic: &v1types.AggchainProof{
-					Proof: &v1types.AggchainProof_Sp1Stark{
-						Sp1Stark: &v1types.SP1StarkProof{
-							Version: ad.Version,
-							Proof:   ad.Proof,
-							Vkey:    ad.Vkey,
-						},
-					},
-					AggchainParams: &v1types.FixedBytes32{
-						Value: ad.AggchainParams.Bytes(),
-					},
-					Context: ad.Context,
-				},
-			},
-		}
-	case *types.AggchainDataSignature:
-		aggchainDataProto = &v1types.AggchainData{
-			Data: &v1types.AggchainData_Signature{
-				Signature: &v1types.FixedBytes65{
-					Value: ad.Signature,
-				},
-			},
-		}
-	default:
-		return common.Hash{}, errUnknownAggchainData
+	aggchainDataProto, err := convertAggchainData(certificate.AggchainData)
+	if err != nil {
+		return common.Hash{}, err
 	}
 
 	protoCert := &v1nodetypes.Certificate{
@@ -130,12 +100,15 @@ func (a *AgglayerGRPCClient) SendCertificate(ctx context.Context,
 		protoCert.ImportedBridgeExits = append(protoCert.ImportedBridgeExits, protoImportedBridgeExit)
 	}
 
-	response, err := a.submissionService.SubmitCertificate(ctx, &v1.SubmitCertificateRequest{
-		Certificate: protoCert,
-	})
+	ctx, cancel := context.WithTimeout(ctx, a.cfg.RequestTimeout.Duration)
+	defer cancel()
 
+	response, err := a.submissionService.SubmitCertificate(ctx,
+		&v1.SubmitCertificateRequest{
+			Certificate: protoCert,
+		})
 	if err != nil {
-		return common.Hash{}, aggkitCommon.RepackGRPCErrorWithDetails(err)
+		return common.Hash{}, fmt.Errorf("failed to submit certificate: %w", aggkitgrpc.RepackGRPCErrorWithDetails(err))
 	}
 
 	return common.BytesToHash(response.CertificateId.Value.Value), nil
@@ -144,6 +117,9 @@ func (a *AgglayerGRPCClient) SendCertificate(ctx context.Context,
 // GetLatestPendingCertificateHeader returns the latest pending certificate header from the AggLayer
 func (a *AgglayerGRPCClient) GetLatestSettledCertificateHeader(
 	ctx context.Context, networkID uint32) (*types.CertificateHeader, error) {
+	ctx, cancel := context.WithTimeout(ctx, a.cfg.RequestTimeout.Duration)
+	defer cancel()
+
 	response, err := a.networkStateService.GetLatestCertificateHeader(
 		ctx,
 		&v1.GetLatestCertificateHeaderRequest{
@@ -152,7 +128,8 @@ func (a *AgglayerGRPCClient) GetLatestSettledCertificateHeader(
 		},
 	)
 	if err != nil {
-		return nil, aggkitCommon.RepackGRPCErrorWithDetails(err)
+		return nil, fmt.Errorf("failed to get latest settled certificate header: %w",
+			aggkitgrpc.RepackGRPCErrorWithDetails(err))
 	}
 
 	return convertProtoCertificateHeader(response.CertificateHeader), nil
@@ -161,6 +138,9 @@ func (a *AgglayerGRPCClient) GetLatestSettledCertificateHeader(
 // GetLatestPendingCertificateHeader returns the latest pending certificate header from the AggLayer
 func (a *AgglayerGRPCClient) GetLatestPendingCertificateHeader(
 	ctx context.Context, networkID uint32) (*types.CertificateHeader, error) {
+	ctx, cancel := context.WithTimeout(ctx, a.cfg.RequestTimeout.Duration)
+	defer cancel()
+
 	response, err := a.networkStateService.GetLatestCertificateHeader(
 		ctx,
 		&v1.GetLatestCertificateHeaderRequest{
@@ -169,27 +149,72 @@ func (a *AgglayerGRPCClient) GetLatestPendingCertificateHeader(
 		},
 	)
 	if err != nil {
-		return nil, aggkitCommon.RepackGRPCErrorWithDetails(err)
+		return nil, fmt.Errorf("failed to get latest pending certificate header: %w",
+			aggkitgrpc.RepackGRPCErrorWithDetails(err))
 	}
 
 	return convertProtoCertificateHeader(response.CertificateHeader), nil
 }
 
 // GetCertificateHeader returns the certificate header from the AggLayer for the given certificate ID
-func (a *AgglayerGRPCClient) GetCertificateHeader(ctx context.Context,
-	certificateID common.Hash) (*types.CertificateHeader, error) {
+func (a *AgglayerGRPCClient) GetCertificateHeader(
+	ctx context.Context, certificateID common.Hash) (*types.CertificateHeader, error) {
+	ctx, cancel := context.WithTimeout(ctx, a.cfg.RequestTimeout.Duration)
+	defer cancel()
+
 	response, err := a.networkStateService.GetCertificateHeader(ctx,
 		&v1.GetCertificateHeaderRequest{CertificateId: &v1nodetypes.CertificateId{
 			Value: &v1types.FixedBytes32{
 				Value: certificateID.Bytes(),
 			},
-		},
-		})
+		}},
+	)
 	if err != nil {
-		return nil, aggkitCommon.RepackGRPCErrorWithDetails(err)
+		return nil, fmt.Errorf("failed to get certificate header: %w", aggkitgrpc.RepackGRPCErrorWithDetails(err))
 	}
 
 	return convertProtoCertificateHeader(response.CertificateHeader), nil
+}
+
+// convertAggchainData converts the aggchain data to a proto aggchain data
+func convertAggchainData(aggchainData types.AggchainData) (*v1types.AggchainData, error) {
+	if aggchainData == nil {
+		return nil, errUndefinedAggchainData
+	}
+
+	switch ad := aggchainData.(type) {
+	case *types.AggchainDataProof:
+		return &v1types.AggchainData{
+			Data: &v1types.AggchainData_Generic{
+				Generic: &v1types.AggchainProof{
+					Proof: &v1types.AggchainProof_Sp1Stark{
+						Sp1Stark: &v1types.SP1StarkProof{
+							Version: ad.Version,
+							Proof:   ad.Proof,
+							Vkey:    ad.Vkey,
+						},
+					},
+					AggchainParams: &v1types.FixedBytes32{
+						Value: ad.AggchainParams.Bytes(),
+					},
+					Context: ad.Context,
+					Signature: &v1types.FixedBytes65{
+						Value: ad.Signature,
+					},
+				},
+			},
+		}, nil
+	case *types.AggchainDataSignature:
+		return &v1types.AggchainData{
+			Data: &v1types.AggchainData_Signature{
+				Signature: &v1types.FixedBytes65{
+					Value: ad.Signature,
+				},
+			},
+		}, nil
+	default:
+		return nil, errUnknownAggchainData
+	}
 }
 
 // convertProtoCertificateHeader converts a proto certificate header to a types certificate header

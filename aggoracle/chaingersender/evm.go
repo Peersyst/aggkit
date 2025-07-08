@@ -11,6 +11,7 @@ import (
 	"github.com/agglayer/aggkit/aggoracle/types"
 	cfgtypes "github.com/agglayer/aggkit/config/types"
 	"github.com/agglayer/aggkit/log"
+	aggkittypes "github.com/agglayer/aggkit/types"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -40,7 +41,7 @@ type EVMChainGERSender struct {
 func NewEVMChainGERSender(
 	logger *log.Logger,
 	l2GERManagerAddr common.Address,
-	l2Client types.EthClienter,
+	l2Client aggkittypes.BaseEthereumClienter,
 	ethTxMan types.EthTxManager,
 	gasOffset uint64,
 	waitPeriodMonitorTx time.Duration,
@@ -48,12 +49,16 @@ func NewEVMChainGERSender(
 	l2GERManager, err := globalexitrootmanagerl2sovereignchain.NewGlobalexitrootmanagerl2sovereignchain(
 		l2GERManagerAddr, l2Client)
 	if err != nil {
+		return nil, fmt.Errorf("failed to create binding for GER L2 manager (SC address: %s): %w", l2GERManagerAddr, err)
+	}
+
+	if err := validateGERSender(ethTxMan.From(), l2GERManager); err != nil {
 		return nil, err
 	}
 
 	l2GERAbi, err := globalexitrootmanagerl2sovereignchain.Globalexitrootmanagerl2sovereignchainMetaData.GetAbi()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to retrieve GER L2 manager ABI: %w", err)
 	}
 
 	return &EVMChainGERSender{
@@ -65,6 +70,22 @@ func NewEVMChainGERSender(
 		gasOffset:           gasOffset,
 		waitPeriodMonitorTx: waitPeriodMonitorTx,
 	}, nil
+}
+
+// validateGERSender validates whether the provided GER sender is allowed to send and remove GERs
+func validateGERSender(gerSender common.Address, l2GERManagerSC types.L2GERManagerContract) error {
+	zeroAddr := common.Address{}
+	gerUpdater, err := l2GERManagerSC.GlobalExitRootUpdater(nil)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve GER updater address from GER L2 manager: %w", err)
+	}
+
+	if gerUpdater != zeroAddr && gerSender != gerUpdater {
+		return fmt.Errorf("invalid GER sender provided (in the EthTxManager configuration), "+
+			"and it is not allowed to update GERs. Expected GER updater by the L2 GER manager contract: %s", gerUpdater)
+	}
+
+	return nil
 }
 
 func (c *EVMChainGERSender) IsGERInjected(ger common.Hash) (bool, error) {

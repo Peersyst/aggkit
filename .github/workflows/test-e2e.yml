@@ -1,161 +1,241 @@
-name: Bats E2E Tests
 # This workflow runs the Bats E2E tests for aggkit.
+# - On push: uses hardcoded kurtosis-cdk commit
+# - On schedule: uses latest kurtosis-cdk main commit with Slack notifications
+name: Bats E2E Tests
 
 on:
   push:
     branches:
       - '**'
+  schedule:
+    # Run every 24 hours at 00:00 UTC
+    - cron: '0 0 * * *'
   workflow_dispatch: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AGGKIT_REPORT_CHANNEL: 'C092K6Z0EUT'
+
 jobs:
+  get-kurtosis-cdk-commit:
+    name: Get Kurtosis CDK Commit
+    runs-on: ubuntu-latest
+    outputs:
+      kurtosis-commit: ${{ steps.get-commit.outputs.commit }}
+    steps:
+      - name: Get kurtosis-cdk commit based on trigger
+        id: get-commit
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            # For scheduled runs, get the latest commit
+            COMMIT=$(curl -s https://api.github.com/repos/0xPolygon/kurtosis-cdk/commits/main | jq -r '.sha')
+            echo "Using latest kurtosis-cdk commit: ${COMMIT}"
+          else
+            # For push/workflow_dispatch, use the fixed commit
+            COMMIT="2a880250c071451a1419b8ebd7b63e4cb898ea8c"
+            echo "Using fixed kurtosis-cdk commit: ${COMMIT}"
+          fi
+          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+
   build-aggkit-image:
     uses: ./.github/workflows/build-aggkit-image.yml
     with:
       go-version: 1.24.x
       docker-image-name: aggkit
 
-  single-l2-chain:
-    needs: build-aggkit-image
-    runs-on: amd-runner-2204
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        e2e-group:
-          - fork12-pessimistic
-          - fork12-op-succinct
+  read-aggkit-args:
+    name: Read aggkit args
+    runs-on: ubuntu-latest
+    outputs:
+      # single l2 network (fork 12, op-succinct)
+      kurtosis-cdk-args-single-fork12-op-succinct: ${{ steps.read-args.outputs.fork12_op_succinct_args }}
+      # single l2 network (fork 12, pessimistic)
+      kurtosis-cdk-args-single-fork12-pessimistic: ${{ steps.read-args.outputs.fork12_pessimistic_args }}
+      # multi l2 networks
+      kurtosis-cdk-args-1: ${{ steps.read-args.outputs.kurtosis-cdk-args-1 }}
+      kurtosis-cdk-args-2: ${{ steps.read-args.outputs.kurtosis-cdk-args-2 }}
+      kurtosis-cdk-args-3: ${{ steps.read-args.outputs.kurtosis-cdk-args-3 }}
+      kurtosis-cdk-args-4: ${{ steps.read-args.outputs.kurtosis-cdk-args-4 }}
+      kurtosis-cdk-args-5: ${{ steps.read-args.outputs.kurtosis-cdk-args-5 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Read kurtosis-cdk-args from file
+        id: read-args
+        run: |
+          # single l2 network (fork 12, op-succinct)
+          CONTENT=$(cat ./.github/test_e2e_single_chain_fork12_op_succinct_args.json | jq -c .)
+          echo "fork12_op_succinct_args=${CONTENT}" >> $GITHUB_OUTPUT
+          # single l2 network (fork 12, pessimistic)
+          CONTENT=$(jq -s '.[0] * .[1]' ./.github/test_e2e_cdk_args_base.json ./.github/test_e2e_gas_token_enabled_args.json | jq -c .)
+          echo "fork12_pessimistic_args=${CONTENT}" >> $GITHUB_OUTPUT
+          # multi l2 networks
+          CONTENT=$(cat ./.github/test_e2e_cdk_args_base.json | jq -c .)
+          echo "kurtosis-cdk-args-1=${CONTENT}" >> $GITHUB_OUTPUT
+          CONTENT=$(cat ./.github/test_e2e_multi_chains_args_2.json | jq -c .)
+          echo "kurtosis-cdk-args-2=${CONTENT}" >> $GITHUB_OUTPUT
+          # Merge base_1 args with args_3 for kurtosis-cdk-args-3
+          CONTENT=$(jq -s '.[0] * .[1]' ./.github/test_e2e_cdk_args_base.json ./.github/test_e2e_gas_token_enabled_args.json | jq -c .)
+          echo "kurtosis-cdk-args-3=${CONTENT}" >> $GITHUB_OUTPUT
+          # Merge base_2 args with args_4 for kurtosis-cdk-args-4
+          CONTENT=$(jq -s '.[0] * .[1]' ./.github/test_e2e_multi_chains_args_2.json ./.github/test_e2e_gas_token_enabled_args.json | jq -c .)
+          echo "kurtosis-cdk-args-4=${CONTENT}" >> $GITHUB_OUTPUT
+          # Merge base_2 args with args_5 for kurtosis-cdk-args-5
+          CONTENT=$(jq -s '.[0] * .[1]' ./.github/test_e2e_multi_chains_args_2.json ./.github/test_e2e_multi_chains_args_3.json | jq -c .)
+          echo "kurtosis-cdk-args-5=${CONTENT}" >> $GITHUB_OUTPUT
+
+  test-single-l2-network-fork12-pessimistic:
+    name: Single L2 chain tests (pessimistic)
+    needs:
+      - build-aggkit-image
+      - read-aggkit-args
+      - get-kurtosis-cdk-commit
+    uses: agglayer/e2e/.github/workflows/aggkit-e2e-single-chain.yml@45314f4f839e1ac54844b4f49c7436de6a9e29d5
+    secrets: inherit
+    with:
+      kurtosis-cdk-ref: ${{ needs.get-kurtosis-cdk-commit.outputs.kurtosis-commit }}
+      agglayer-e2e-ref: 45314f4f839e1ac54844b4f49c7436de6a9e29d5
+      kurtosis-cdk-enclave-name: aggkit
+      kurtosis-cdk-args: ${{ needs.read-aggkit-args.outputs.kurtosis-cdk-args-single-fork12-pessimistic }}
+      test-name: "test-single-l2-network-fork12-pessimistic"
+
+  check-single-l2-network-fork12-pessimistic-tests-result:
+    name: Check results for single l2 network (pessimistic)
+    needs:
+      - test-single-l2-network-fork12-pessimistic
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 1
+        if: ${{ contains(fromJSON('["failure", "cancelled"]'), needs.test-single-l2-network-fork12-pessimistic.result) }}
+
+  test-single-l2-network-fork12-op-succinct:
+    name: Single L2 chain tests (op-succinct)
+    needs:
+      - build-aggkit-image
+      - read-aggkit-args
+      - get-kurtosis-cdk-commit
+    uses: agglayer/e2e/.github/workflows/aggkit-e2e-single-chain.yml@45314f4f839e1ac54844b4f49c7436de6a9e29d5
+    secrets: inherit
+    with:
+      kurtosis-cdk-ref: ${{ needs.get-kurtosis-cdk-commit.outputs.kurtosis-commit }}
+      agglayer-e2e-ref: 45314f4f839e1ac54844b4f49c7436de6a9e29d5
+      kurtosis-cdk-enclave-name: op
+      kurtosis-cdk-args: ${{ needs.read-aggkit-args.outputs.kurtosis-cdk-args-single-fork12-op-succinct }}
+      test-name: "test-single-l2-network-fork12-op-succinct"
+
+  check-single-network-fork12-op-succinct-tests-result:
+    name: Check results for single l2 network (op-succinct)
+    needs:
+      - test-single-l2-network-fork12-op-succinct
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 1
+        if: ${{ contains(fromJSON('["failure", "cancelled"]'), needs.test-single-l2-network-fork12-op-succinct.result) }}
+
+  build-tools:
+    name: Build aggsender find imported bridge tool
+    needs:
+      - build-aggkit-image
+    runs-on: amd-runner-2204
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set kurtosis-cdk ref
-        id: set-kurtosis-cdk-ref
-        run: |
-          if [[ "${{ matrix.e2e-group }}" == "fork12-pessimistic" ]]; then
-            # https://github.com/0xPolygon/kurtosis-cdk/tree/feat/aggsender-agglayer-grpc-integration
-            echo "ref=0ce0bb0e100bb86c8e7d51d8d27b7b53b29fed1f" >> $GITHUB_OUTPUT
-          elif [[ "${{ matrix.e2e-group }}" == "fork12-op-succinct" ]]; then
-            # https://github.com/0xPolygon/kurtosis-cdk/tree/main
-            echo "ref=4447745444f706e5ba2be6217f17e7434d95c5b0" >> $GITHUB_OUTPUT 
-          else
-            echo "Unknown e2e group ${{ matrix.e2e-group }}" >&2
-            exit 1
-          fi
-
-      - name: Checkout kurtosis-cdk
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygon/kurtosis-cdk
-          path: kurtosis-cdk
-          ref: ${{ steps.set-kurtosis-cdk-ref.outputs.ref }}
-
-      - name: Install Kurtosis CDK tools
-        uses: ./kurtosis-cdk/.github/actions/setup-kurtosis-cdk
-
-      - name: Setup Bats and bats libs
-        uses: bats-core/bats-action@2.0.0
-
-      - name: Download aggkit archive
-        uses: actions/download-artifact@v4
-        with:
-          name: aggkit
-          path: /tmp
-
-      - name: Load aggkit image
-        run: |
-          docker load --input /tmp/aggkit.tar
-          docker image ls -a
-
-      - name: Run E2E tests
-        run: make test-e2e-${{ matrix.e2e-group }}
-        working-directory: test
-        env:
-          KURTOSIS_FOLDER: ${{ github.workspace }}/kurtosis-cdk
-          BATS_LIB_PATH: /usr/lib/
-          AGGLAYER_PROVER_SP1_KEY: ${{ secrets.SP1_PRIVATE_KEY }}
-
-      - name: Dump enclave logs
-        if: failure()
-        run: kurtosis dump ./dump
-
-      - name: Generate archive name
-        if: failure()
-        run: |
-          archive_name="dump_run_with_args_${{matrix.e2e-group}}_${{ github.run_id }}"
-          echo "ARCHIVE_NAME=${archive_name}" >> "$GITHUB_ENV"
-          echo "Generated archive name: ${archive_name}"
-
-      - name: Upload logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARCHIVE_NAME }}
-          path: ./dump
-
-  multi-l2-chains:
-    needs: build-aggkit-image
-    runs-on: amd-runner-2204
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Install Go
         uses: actions/setup-go@v5
         with:
           go-version: 1.24.x
-
-      - name: Build Tools
+      - name: Build Aggsender Find Imported Bridge
         run: make build-tools
-
-      - name: Checkout kurtosis-cdk
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygon/kurtosis-cdk
-          path: kurtosis-cdk
-          ref: 0ce0bb0e100bb86c8e7d51d8d27b7b53b29fed1f
-
-      - name: Install Kurtosis CDK tools
-        uses: ./kurtosis-cdk/.github/actions/setup-kurtosis-cdk
-
-      - name: Setup Bats and bats libs
-        uses: bats-core/bats-action@2.0.0
-
-      - name: Download aggkit archive
-        uses: actions/download-artifact@v4
-        with:
-          name: aggkit
-          path: /tmp
-
-      - name: Load aggkit image
-        run: |
-          docker load --input /tmp/aggkit.tar
-          docker image ls -a
-
-      - name: Run E2E tests
-        run: make test-e2e-fork12-multi-pessimistic
-        working-directory: test
-        env:
-          KURTOSIS_FOLDER: ${{ github.workspace }}/kurtosis-cdk
-          BATS_LIB_PATH: /usr/lib/
-          AGGLAYER_PROVER_SP1_KEY: ${{ secrets.SP1_PRIVATE_KEY }}
-
-      - name: Dump enclave logs
-        if: failure()
-        run: kurtosis dump ./dump
-
-      - name: Generate archive name
-        if: failure()
-        run: |
-          archive_name="dump_run_with_args_fork12-multi-pessimistic_${{ github.run_id }}"
-          echo "ARCHIVE_NAME=${archive_name}" >> "$GITHUB_ENV"
-          echo "Generated archive name: ${archive_name}"
-
-      - name: Upload logs
-        if: failure()
+      - name: Upload Binary
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARCHIVE_NAME }}
-          path: ./dump
+          name: aggsender_find_imported_bridge
+          path: ./target/aggsender_find_imported_bridge
+
+  test-multi-l2-networks-2-chains:
+    name: Multi chains E2E test (2 chains)
+    needs:
+      - build-aggkit-image
+      - build-tools
+      - read-aggkit-args
+      - get-kurtosis-cdk-commit
+    uses: agglayer/e2e/.github/workflows/aggkit-e2e-multi-chains.yml@45314f4f839e1ac54844b4f49c7436de6a9e29d5
+    secrets: inherit
+    with:
+      kurtosis-cdk-ref: ${{ needs.get-kurtosis-cdk-commit.outputs.kurtosis-commit }}
+      agglayer-e2e-ref: 45314f4f839e1ac54844b4f49c7436de6a9e29d5
+      kurtosis-cdk-enclave-name: aggkit
+      aggsender-find-imported-bridge-artifact: aggsender_find_imported_bridge
+      kurtosis-cdk-args-1: ${{ needs.read-aggkit-args.outputs.kurtosis-cdk-args-1 }}
+      kurtosis-cdk-args-2: ${{ needs.read-aggkit-args.outputs.kurtosis-cdk-args-2 }}
+
+  check-multi-l2-networks-2-chains-tests-result:
+    name: Check results for multi l2 networks (2 chains)
+    needs:
+      - test-multi-l2-networks-2-chains
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 1
+        if: ${{ contains(fromJSON('["failure", "cancelled"]'), needs.test-multi-l2-networks-2-chains.result) }}
+
+  test-multi-l2-networks-3-chains:
+    name: Multi chains E2E test (3 chains)
+    needs:
+      - build-aggkit-image
+      - build-tools
+      - read-aggkit-args
+      - get-kurtosis-cdk-commit
+    uses: agglayer/e2e/.github/workflows/aggkit-e2e-multi-chains.yml@45314f4f839e1ac54844b4f49c7436de6a9e29d5
+    secrets: inherit
+    with:
+      kurtosis-cdk-ref: ${{ needs.get-kurtosis-cdk-commit.outputs.kurtosis-commit }}
+      agglayer-e2e-ref: 45314f4f839e1ac54844b4f49c7436de6a9e29d5
+      kurtosis-cdk-enclave-name: aggkit
+      aggsender-find-imported-bridge-artifact: aggsender_find_imported_bridge
+      kurtosis-cdk-args-1: ${{ needs.read-aggkit-args.outputs.kurtosis-cdk-args-3 }}
+      kurtosis-cdk-args-2: ${{ needs.read-aggkit-args.outputs.kurtosis-cdk-args-4 }}
+      kurtosis-cdk-args-3: ${{ needs.read-aggkit-args.outputs.kurtosis-cdk-args-5 }}
+      number-of-chains: 3
+
+  check-multi-l2-networks-3-chains-tests-result:
+    name: Check results for multi l2 networks (3 chains)
+    needs:
+      - test-multi-l2-networks-3-chains
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 1
+        if: ${{ contains(fromJSON('["failure", "cancelled"]'), needs.test-multi-l2-networks-3-chains.result) }}
+
+  notify-slack:
+    name: Notify Slack
+    needs:
+      - test-single-l2-network-fork12-pessimistic
+      - test-single-l2-network-fork12-op-succinct
+      - test-multi-l2-networks-2-chains
+      - test-multi-l2-networks-3-chains
+      - get-kurtosis-cdk-commit
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'schedule' && github.ref == 'refs/heads/develop'
+    steps:
+
+      - name: Send Slack notification
+        uses: agglayer/gha-notify-generic@v1
+        with:
+          slack-bot-token: ${{ secrets.SLACK_APP_TOKEN_AGGLAYER_NOTIFY_GENERIC }}
+          channel-id: ${{ env.AGGKIT_REPORT_CHANNEL }}
+          message: |
+            Daily E2E Tests Report
+
+            Kurtosis CDK Commit: `${{ needs.get-kurtosis-cdk-commit.outputs.kurtosis-commit }}`
+
+            Test Results:
+            • Single L2 (pessimistic): ${{ needs.test-single-l2-network-fork12-pessimistic.result == 'success' && '🟢' || '🔴' }}
+            • Single L2 (op-succinct): ${{ needs.test-single-l2-network-fork12-op-succinct.result == 'success' && '🟢' || '🔴' }}
+            • Multi L2 (2 chains): ${{ needs.test-multi-l2-networks-2-chains.result == 'success' && '🟢' || '🔴' }}
+            • Multi L2 (3 chains): ${{ needs.test-multi-l2-networks-3-chains.result == 'success' && '🟢' || '🔴' }}
+
+            <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow>

@@ -2,7 +2,8 @@ PathRWData = "{{.zkevm_path_rw_data}}/"
 L1URL="{{.l1_rpc_url}}"
 L2URL="{{.l2_rpc_url}}"
 # Uncomment this line to resolve finalized block using op_node
-#L2RPC = "{ Mode= \"op\", URL= \"{{.l2_rpc_url}}\", OpNodeURL= \"{{.op_cl_rpc_url}}\" }"
+# you have to set BridgeL2Sync.BlockFinality = "FinalizedBlock"
+L2RPC = "{ Mode= \"op\", URL= \"{{.l2_rpc_url}}\", OpNodeURL= \"{{.op_cl_rpc_url}}\" }"
 
 AggLayerURL="{{.agglayer_grpc_url}}"
 
@@ -18,6 +19,7 @@ Level = "{{.global_log_level}}"
 Outputs = ["stderr"]
 
 [L1Config]
+	URL = "{{.l1_rpc_url}}"
 	chainId = "{{.l1_chain_id}}"
 	polygonZkEVMGlobalExitRootAddress = "{{.zkevm_global_exit_root_address}}"
 	polygonRollupManagerAddress = "{{.zkevm_rollup_manager_address}}"
@@ -29,6 +31,7 @@ Outputs = ["stderr"]
 
 [BridgeL2Sync]
 BridgeAddr = "{{.zkevm_L2_bridge_address}}"
+BlockFinality = "FinalizedBlock"
        
 [AggSender]
 AggchainProofURL="{{.aggkit_prover_grpc_url}}"
@@ -39,9 +42,10 @@ Mode = "AggchainProof"
 		Interval = "1m"
 
 [AggchainProofGen]
-AggchainProofURL = "{{.aggkit_prover_grpc_url}}"
 GlobalExitRootL2Addr = "{{.zkevm_global_exit_root_l2_address}}"
 GenerateAggchainProofTimeout = "1h"
+	[AggchainProofGen.AggkitProverClient]
+	URL = "{{.aggkit_prover_grpc_url}}"
 
 [RPC]
 ReadTimeout = "1h"

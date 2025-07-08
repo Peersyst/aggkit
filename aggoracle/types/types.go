@@ -6,19 +6,10 @@ import (
 
 	"github.com/0xPolygon/cdk-contracts-tooling/contracts/pp/l2-sovereign-chain/globalexitrootmanagerl2sovereignchain"
 	ethtxtypes "github.com/0xPolygon/zkevm-ethtx-manager/types"
-	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
-
-// EthClienter is an interface to interact with the Ethereum client
-type EthClienter interface {
-	ethereum.LogFilterer
-	ethereum.BlockNumberReader
-	ethereum.ChainReader
-	bind.ContractBackend
-}
 
 // EthTxManager is an interface to interact with the EthTxManager
 type EthTxManager interface {
@@ -34,6 +25,7 @@ type EthTxManager interface {
 		gasOffset uint64,
 		sidecar *types.BlobTxSidecar,
 	) (common.Hash, error)
+	From() common.Address
 }
 
 // L2GERManagerContract is an interface to interact with the GlobalExitRootManager contract
@@ -49,4 +41,5 @@ type L2GERManagerContract interface {
 		*globalexitrootmanagerl2sovereignchain.Globalexitrootmanagerl2sovereignchainUpdateRemovalHashChainValueIterator,
 		error,
 	)
+	GlobalExitRootUpdater(opts *bind.CallOpts) (common.Address, error)
 }
