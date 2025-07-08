@@ -209,7 +209,7 @@ func (rd *ReorgDetector) detectReorgInTrackedList(ctx context.Context) error {
 				headersCacheLock.Unlock()
 
 				// Check if the block hash matches with the actual block hash
-				if hdr.Hash == currentHeader.Hash() {
+				if hdr.Hash == currentHeader.RpcHash {
 					// Delete block from the tracked blocks list if it is less than or equal to the last finalized block
 					// and hashes matches. If higher than finalized block, we assume a reorg still might happen.
 					if hdr.Num <= lastFinalisedBlock.Number.Uint64() {

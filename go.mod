@@ -190,3 +190,5 @@ require (
 	honnef.co/go/tools v0.0.1-2020.1.4 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+replace github.com/ethereum/go-ethereum => github.com/Peersyst/go-ethereum v1.15.5-agglayer.0
